@@ -1159,53 +1159,122 @@ def manager_roster_page():
                 value=2
             )
     
-    # Conflict Detection Section
-    st.markdown("<h2 class='section-header'>⚠️ Conflict Detection & Resolution</h2>", unsafe_allow_html=True)
-    
-    if st.button("🔍 Check for Conflicts"):
+    # ══════════════════════════════════════════════════════════════════════════
+    # LAYER 1: HARD RULES (Must never be violated)
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("<h2 class='section-header'>🚫 Hard Rule Violations</h2>", unsafe_allow_html=True)
+    st.caption("These rules cannot be broken - the system will block generation if violated")
+
+    if st.button("🔍 Check Hard Rules", key="check_hard_rules"):
+        hard_violations = []
         rotating_staff = [s for s in st.session_state.staff_list if not s.is_fixed_roster]
-        
-        if rotating_staff:
+        interns = [s for s in rotating_staff if s.role == "Intern"]
+
+        # Check 1: Two interns on same line
+        intern_lines = {}
+        for intern in interns:
+            line = st.session_state.current_roster.get(intern.name, 0)
+            if line > 0:
+                if line not in intern_lines:
+                    intern_lines[line] = []
+                intern_lines[line].append(intern.name)
+
+        for line_num, intern_names in intern_lines.items():
+            if len(intern_names) > 1:
+                hard_violations.append({
+                    'type': 'intern_pairing',
+                    'line': line_num,
+                    'details': f"Line {line_num}: Multiple interns ({', '.join(intern_names)}) - interns cannot work together"
+                })
+
+        # Check 2: Friday night shift before Saturday leave
+        line_manager = RosterLineManager(st.session_state.roster_start)
+        for staff in rotating_staff:
+            if staff.leave_periods:
+                staff_line = st.session_state.current_roster.get(staff.name, 0)
+                if staff_line > 0:
+                    line_obj = line_manager.lines[staff_line - 1]
+                    for leave_start, leave_end, leave_type in staff.leave_periods:
+                        # Check if leave starts on Saturday
+                        if leave_start.weekday() == 5:  # Saturday
+                            friday_before = leave_start - timedelta(days=1)
+                            shift_on_friday = line_obj.get_shift_type(friday_before)
+                            if shift_on_friday == 'N':
+                                hard_violations.append({
+                                    'type': 'friday_night_leave',
+                                    'staff': staff.name,
+                                    'line': staff_line,
+                                    'details': f"{staff.name} (Line {staff_line}): Night shift on {friday_before.strftime('%d/%m')} before leave starts {leave_start.strftime('%d/%m')}"
+                                })
+
+        # Display results
+        if hard_violations:
+            st.error(f"🚫 Found {len(hard_violations)} hard rule violation(s) - MUST be fixed before generating roster")
+            for violation in hard_violations:
+                if violation['type'] == 'intern_pairing':
+                    st.warning(f"👥 **Intern Pairing:** {violation['details']}")
+                elif violation['type'] == 'friday_night_leave':
+                    st.warning(f"🌙 **Award Violation:** {violation['details']}")
+        else:
+            st.success("✅ No hard rule violations - roster can be generated")
+
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # LAYER 2: REQUEST CONFLICTS (Resolved by priority)
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("<h2 class='section-header'>⚠️ Request Conflicts (Priority-Based)</h2>", unsafe_allow_html=True)
+    st.caption("When multiple people request the same line, priority determines who gets it")
+
+    if st.button("🔍 Check Request Conflicts", key="check_request_conflicts"):
+        rotating_staff = [s for s in st.session_state.staff_list if not s.is_fixed_roster]
+        non_intern_staff = [s for s in rotating_staff if s.role != "Intern"]
+
+        if non_intern_staff:
             detector = ConflictDetector(
-                staff_list=rotating_staff,
+                staff_list=non_intern_staff,
                 current_roster=st.session_state.current_roster,
                 request_histories=st.session_state.request_histories,
                 roster_start=st.session_state.roster_start
             )
-            
+
             conflicts = detector.detect_line_conflicts()
-            
+
             if conflicts:
-                st.warning(f"⚠️ Found {len(conflicts)} conflict(s)")
-                
+                st.warning(f"⚠️ Found {len(conflicts)} request conflict(s) - will be resolved by priority")
+
                 for conflict in conflicts:
-                    with st.expander(f"⚠️ Line {conflict.line_number} Conflict"):
-                        st.write("**Requesters:**")
-                        for staff, priority in conflict.requesters:
-                            priority_level = "🟢 High" if priority >= 150 else "🟡 Medium" if priority >= 80 else "🟠 Low"
-                            st.write(f"• {staff.name}: Priority {priority:.0f} {priority_level}")
-                        
+                    with st.expander(f"⚠️ Line {conflict.line_number} - Multiple Requests"):
+                        st.write("**Requesting to move here:**")
+                        if conflict.requesters:
+                            for staff, priority in conflict.requesters:
+                                priority_level = "🟢 High" if priority >= 150 else "🟡 Medium" if priority >= 80 else "🟠 Low"
+                                st.write(f"• {staff.name}: Priority {priority:.0f} {priority_level}")
+                        else:
+                            st.write("• (none)")
+
                         if conflict.current_occupant:
                             staff, priority = conflict.current_occupant
-                            priority_level = "🟢 High" if priority >= 150 else "🟡 Medium"
-                            st.write("**Current Occupant:**")
+                            priority_level = "🟢 High" if priority >= 150 else "🟡 Medium" if priority >= 80 else "🟠 Low"
+                            st.write("**Currently on this line (wants to stay):**")
                             st.write(f"• {staff.name}: Priority {priority:.0f} {priority_level}")
-                        
+
                         winner = conflict.get_winner()
-                        st.success(f"✅ Recommended: {winner.name}")
-                        
+                        st.success(f"✅ Winner: {winner.name}")
+
                         losers = conflict.get_losers()
                         if losers:
-                            st.write("**Alternative assignments needed:**")
+                            st.write("**Will be assigned alternatives:**")
                             for loser in losers:
                                 alts = detector.suggest_alternatives(loser, [conflict.line_number])
-                                st.write(f"{loser.name}:")
-                                for line_num, reason in alts[:3]:
-                                    st.write(f"  → Line {line_num}: {reason}")
+                                if alts:
+                                    st.write(f"• {loser.name} → Line {alts[0][0]} ({alts[0][1]})")
+                                else:
+                                    st.write(f"• {loser.name} → (will find available line)")
             else:
-                st.success("✅ No conflicts detected - all requests are compatible")
+                st.success("✅ No request conflicts - all line requests are compatible")
         else:
-            st.info("No rotating roster staff to check")
+            st.info("No rotating roster staff (excluding interns) to check")
     
     st.markdown("---")
     
