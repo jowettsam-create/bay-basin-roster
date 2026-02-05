@@ -114,8 +114,9 @@ class ConflictDetector:
                         # This person is requesting to move here
                         requesters_with_priority.append((staff, priority))
                 
-                # Only a conflict if there are actual competing requests
-                if len(requesters_with_priority) > 0 or (current_occupant and len(requests) > 1):
+                # Only a conflict if someone is actively requesting to move to this line
+                # (not just multiple people already on the line with no change requests)
+                if len(requesters_with_priority) > 0:
                     conflict = RequestConflict(
                         line_number=line_num,
                         requesters=requesters_with_priority,
