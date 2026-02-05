@@ -1,0 +1,19 @@
+﻿# Data files (keep private)
+roster_data/
+*.json
+
+# Secrets
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
