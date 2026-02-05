@@ -16,7 +16,7 @@ from fixed_roster_helper import (
     create_fixed_roster_staff,
     create_fixed_roster_from_dates
 )
-import data_storage
+import google_sheets_storage as data_storage
 from excel_export import export_roster_to_excel
 
 # Request tracking system
@@ -160,7 +160,7 @@ def auto_save():
         st.session_state.roster_end,
         st.session_state.previous_roster_end
     )
-    
+
     # Save request histories
     hist_dict = {name: h.to_dict() for name, h in st.session_state.request_histories.items()}
     data_storage.save_request_history(hist_dict)
@@ -599,116 +599,116 @@ def staff_management_page():
     with tab2:
         # Add new staff
         st.markdown("### Add New Staff Member")
-        
-        with st.form("add_staff_form"):
-            st.markdown("**Basic Information:**")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                name = st.text_input("Name", placeholder="e.g., John Smith")
-            with col2:
-                role = st.selectbox("Role", ["Paramedic", "Intern", "PT/FTR", "Casual"])
-            
-            # Fixed roster option
-            is_fixed = st.checkbox("Fixed/Casual roster (works specific days)")
-            
-            fixed_params = None
-            if is_fixed:
-                st.markdown("**Fixed Roster Pattern:**")
-                
-                fixed_type = st.radio(
-                    "Schedule type",
-                    ["Specific days of week", "Repeating pattern"]
+
+        st.markdown("**Basic Information:**")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            name = st.text_input("Name", placeholder="e.g., John Smith", key="add_staff_name")
+        with col2:
+            role = st.selectbox("Role", ["Paramedic", "Intern", "PT/FTR", "Casual"], key="add_staff_role")
+
+        # Fixed roster option - OUTSIDE form so it triggers immediate rerun
+        is_fixed = st.checkbox("Fixed/Casual roster (works specific days)", key="add_staff_is_fixed")
+
+        fixed_params = None
+        current_line = 0
+
+        if is_fixed:
+            st.markdown("**Fixed Roster Pattern:**")
+
+            fixed_type = st.radio(
+                "Schedule type",
+                ["Specific days of week", "Repeating pattern"],
+                key="add_staff_fixed_type"
+            )
+
+            if fixed_type == "Specific days of week":
+                col1, col2, col3 = st.columns(3)
+                working_days = []
+
+                with col1:
+                    if st.checkbox("Monday", key="add_mon"): working_days.append("Monday")
+                    if st.checkbox("Tuesday", key="add_tue"): working_days.append("Tuesday")
+                    if st.checkbox("Wednesday", key="add_wed"): working_days.append("Wednesday")
+
+                with col2:
+                    if st.checkbox("Thursday", key="add_thu"): working_days.append("Thursday")
+                    if st.checkbox("Friday", key="add_fri"): working_days.append("Friday")
+
+                with col3:
+                    if st.checkbox("Saturday", key="add_sat"): working_days.append("Saturday")
+                    if st.checkbox("Sunday", key="add_sun"): working_days.append("Sunday")
+
+                shift_type = st.radio("Shift type", ["Day shifts", "Night shifts"], key="add_shift")
+                shift_code = 'D' if shift_type == "Day shifts" else 'N'
+
+                fixed_params = {'type': 'days', 'working_days': working_days, 'shift_type': shift_code}
+
+            else:  # Repeating pattern
+                pattern = st.text_input(
+                    "Pattern (D=Day, N=Night, O=Off)",
+                    placeholder="e.g., DDDDOOO",
+                    key="add_pattern"
                 )
-                
-                if fixed_type == "Specific days of week":
-                    col1, col2, col3 = st.columns(3)
-                    working_days = []
-                    
-                    with col1:
-                        if st.checkbox("Monday", key="add_mon"): working_days.append("Monday")
-                        if st.checkbox("Tuesday", key="add_tue"): working_days.append("Tuesday")
-                        if st.checkbox("Wednesday", key="add_wed"): working_days.append("Wednesday")
-                    
-                    with col2:
-                        if st.checkbox("Thursday", key="add_thu"): working_days.append("Thursday")
-                        if st.checkbox("Friday", key="add_fri"): working_days.append("Friday")
-                    
-                    with col3:
-                        if st.checkbox("Saturday", key="add_sat"): working_days.append("Saturday")
-                        if st.checkbox("Sunday", key="add_sun"): working_days.append("Sunday")
-                    
-                    shift_type = st.radio("Shift type", ["Day shifts", "Night shifts"], key="add_shift")
-                    shift_code = 'D' if shift_type == "Day shifts" else 'N'
-                    
-                    fixed_params = {'type': 'days', 'working_days': working_days, 'shift_type': shift_code}
-                
-                else:  # Repeating pattern
-                    pattern = st.text_input(
-                        "Pattern (D=Day, N=Night, O=Off)",
-                        placeholder="e.g., DDDDOOO",
-                        key="add_pattern"
-                    )
-                    fixed_params = {'type': 'pattern', 'pattern': pattern.upper()}
-            
+                fixed_params = {'type': 'pattern', 'pattern': pattern.upper() if pattern else ''}
+
+        else:
             # Current line assignment (for rotating staff)
-            if not is_fixed:
-                st.markdown("**Current Line Assignment:**")
-                current_line = st.selectbox(
-                    "Assign to line",
-                    options=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-                    format_func=lambda x: "Unassigned" if x == 0 else f"Line {x}"
-                )
+            st.markdown("**Current Line Assignment:**")
+            current_line = st.selectbox(
+                "Assign to line",
+                options=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                format_func=lambda x: "Unassigned" if x == 0 else f"Line {x}",
+                key="add_staff_line"
+            )
+
+        # Submit button
+        if st.button("➕ Add Staff Member", type="primary", use_container_width=True):
+            if not name:
+                st.error("❌ Please enter a name")
+            elif is_fixed and fixed_params and fixed_params['type'] == 'days' and not fixed_params['working_days']:
+                st.error("❌ Please select at least one working day")
+            elif is_fixed and fixed_params and fixed_params['type'] == 'pattern' and not fixed_params.get('pattern'):
+                st.error("❌ Please enter a pattern")
             else:
-                current_line = 0
-            
-            submitted = st.form_submit_button("➕ Add Staff Member", type="primary", width="stretch")
-            
-            if submitted:
-                if not name:
-                    st.error("❌ Please enter a name")
-                elif is_fixed and fixed_params and fixed_params['type'] == 'days' and not fixed_params['working_days']:
-                    st.error("❌ Please select at least one working day")
-                elif is_fixed and fixed_params and fixed_params['type'] == 'pattern' and not fixed_params['pattern']:
-                    st.error("❌ Please enter a pattern")
-                else:
-                    # Create staff member
-                    if is_fixed and fixed_params:
-                        if fixed_params['type'] == 'days':
-                            new_staff = create_fixed_roster_from_days(
-                                name=name,
-                                role=role,
-                                working_days=fixed_params['working_days'],
-                                shift_type=fixed_params['shift_type'],
-                                roster_start=st.session_state.roster_start,
-                                roster_end=st.session_state.roster_end
-                            )
-                        else:
-                            new_staff = create_fixed_roster_staff(
-                                name=name,
-                                role=role,
-                                schedule_pattern=fixed_params['pattern'],
-                                roster_start=st.session_state.roster_start,
-                                roster_end=st.session_state.roster_end
-                            )
-                    else:
-                        new_staff = StaffMember(
+                # Create staff member
+                if is_fixed and fixed_params:
+                    if fixed_params['type'] == 'days':
+                        new_staff = create_fixed_roster_from_days(
                             name=name,
-                            role=role
+                            role=role,
+                            working_days=fixed_params['working_days'],
+                            shift_type=fixed_params['shift_type'],
+                            roster_start=st.session_state.roster_start,
+                            roster_end=st.session_state.roster_end
                         )
-                    
-                    # Add to list
-                    st.session_state.staff_list.append(new_staff)
-                    
-                    # Set current line for rotating staff
-                    if not is_fixed:
-                        st.session_state.current_roster[name] = current_line
-                    
-                    # Auto-save
-                    auto_save()
-                    
-                    st.success(f"✅ Added {name}!")
-                    st.rerun()
+                    else:
+                        new_staff = create_fixed_roster_staff(
+                            name=name,
+                            role=role,
+                            schedule_pattern=fixed_params['pattern'],
+                            roster_start=st.session_state.roster_start,
+                            roster_end=st.session_state.roster_end
+                        )
+                else:
+                    new_staff = StaffMember(
+                        name=name,
+                        role=role
+                    )
+
+                # Add to list
+                st.session_state.staff_list.append(new_staff)
+
+                # Set current line for rotating staff
+                if not is_fixed:
+                    st.session_state.current_roster[name] = current_line
+
+                # Auto-save
+                auto_save()
+
+                st.success(f"✅ Added {name}!")
+                st.rerun()
 
 
 def staff_request_page():
