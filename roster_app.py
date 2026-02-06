@@ -149,6 +149,8 @@ if 'previous_roster_end' not in st.session_state:
     st.session_state.previous_roster_end = datetime(2026, 1, 23)
 if 'request_histories' not in st.session_state:
     st.session_state.request_histories = {}
+if 'roster_history' not in st.session_state:
+    st.session_state.roster_history = data_storage.load_roster_history()
 
 
 def auto_save():
@@ -1958,6 +1960,238 @@ def line_explorer_page():
             st.error(f"❌ Transitioning from Line {current_line_num} to Line {new_line_num} violates Award requirements")
             st.error(f"**Reason:** {message}")
 
+
+def roster_history_page():
+    """Page to record and view approved roster history"""
+    st.markdown("<h1 class='main-header'>📜 Roster History</h1>", unsafe_allow_html=True)
+
+    st.info("""
+    **Purpose:** Record the actual approved roster assignments (after management approval).
+    This affects priority calculations - staff only lose priority when their request is
+    actually approved in the final roster, not just in the draft.
+    """)
+
+    # Load existing history
+    if 'roster_history' not in st.session_state:
+        st.session_state.roster_history = data_storage.load_roster_history()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Section 1: Record Approved Roster
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("## 📝 Record Approved Roster")
+    st.caption("Enter the final approved line assignments after management review")
+
+    with st.expander("➕ Add Approved Roster Period", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            approved_start = st.date_input(
+                "Roster Start Date",
+                value=st.session_state.roster_start,
+                key="approved_start"
+            )
+        with col2:
+            approved_end = st.date_input(
+                "Roster End Date",
+                value=st.session_state.roster_end,
+                key="approved_end"
+            )
+
+        period_name = f"{approved_start.strftime('%b')}-{approved_end.strftime('%b %Y')}"
+        st.write(f"**Period:** {period_name}")
+
+        st.markdown("### Line Assignments")
+        st.caption("Enter the line each staff member was assigned in the approved roster")
+
+        # Get rotating staff
+        rotating_staff = [s for s in st.session_state.staff_list if not s.is_fixed_roster]
+
+        if rotating_staff:
+            approved_assignments = {}
+
+            # Create columns for better layout
+            col1, col2 = st.columns(2)
+
+            for i, staff in enumerate(sorted(rotating_staff, key=lambda s: s.name)):
+                # Get current/draft assignment as default
+                current_line = st.session_state.current_roster.get(staff.name, 0)
+
+                with col1 if i % 2 == 0 else col2:
+                    line = st.selectbox(
+                        f"{staff.name}",
+                        options=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                        index=current_line,
+                        format_func=lambda x: "Unassigned" if x == 0 else f"Line {x}",
+                        key=f"approved_line_{staff.name}"
+                    )
+                    approved_assignments[staff.name] = line
+
+            st.markdown("---")
+
+            approved_date = st.date_input("Date Approved", value=datetime.now(), key="approval_date")
+
+            if st.button("💾 Save Approved Roster", type="primary", use_container_width=True):
+                # Create roster entry
+                roster_entry = {
+                    'period': period_name,
+                    'start_date': approved_start.isoformat(),
+                    'end_date': approved_end.isoformat(),
+                    'assignments': approved_assignments,
+                    'approved_date': approved_date.isoformat(),
+                    'status': 'approved'
+                }
+
+                # Check if this period already exists
+                existing_idx = None
+                for idx, entry in enumerate(st.session_state.roster_history):
+                    if entry['period'] == period_name:
+                        existing_idx = idx
+                        break
+
+                if existing_idx is not None:
+                    st.session_state.roster_history[existing_idx] = roster_entry
+                    st.success(f"✅ Updated approved roster for {period_name}")
+                else:
+                    st.session_state.roster_history.append(roster_entry)
+                    st.success(f"✅ Saved approved roster for {period_name}")
+
+                # Update request histories with approved outcomes
+                for staff_name, assigned_line in approved_assignments.items():
+                    if assigned_line == 0:
+                        continue
+
+                    history = st.session_state.request_histories.get(staff_name)
+                    if not history:
+                        history = RequestHistory(staff_name=staff_name)
+                        st.session_state.request_histories[staff_name] = history
+
+                    # Update line assignment (this affects tenure tracking)
+                    history.update_line_assignment(
+                        assigned_line,
+                        period_name,
+                        reason="approved_roster"
+                    )
+
+                    # Find and approve/deny pending requests for this period
+                    for idx, req in enumerate(history.request_log):
+                        if req.status == 'pending' and req.roster_period == period_name:
+                            got_requested = False
+                            if req.request_type == 'line_change':
+                                got_requested = (req.request_details.get('requested_line') == assigned_line)
+                            elif req.request_type == 'stay_on_line':
+                                got_requested = (req.request_details.get('stay_on_line') == assigned_line)
+                            elif req.request_type == 'dates_off':
+                                got_requested = True  # Best effort for date requests
+
+                            if got_requested:
+                                history.approve_request(idx, {'assigned_line': assigned_line})
+                            else:
+                                history.deny_request(idx, f"Approved roster assigned Line {assigned_line}")
+
+                # Save everything
+                data_storage.save_roster_history(st.session_state.roster_history)
+                hist_dict = {name: h.to_dict() for name, h in st.session_state.request_histories.items()}
+                data_storage.save_request_history(hist_dict)
+
+                st.rerun()
+        else:
+            st.warning("No rotating roster staff found")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Section 2: View History
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 📋 Previous Approved Rosters")
+
+    if st.session_state.roster_history:
+        # Sort by start date (most recent first)
+        sorted_history = sorted(
+            st.session_state.roster_history,
+            key=lambda x: x.get('start_date', ''),
+            reverse=True
+        )
+
+        for entry in sorted_history:
+            with st.expander(f"📅 {entry['period']} ({entry.get('status', 'approved').title()})"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Start:** {entry.get('start_date', 'N/A')}")
+                    st.write(f"**End:** {entry.get('end_date', 'N/A')}")
+                with col2:
+                    st.write(f"**Approved:** {entry.get('approved_date', 'N/A')}")
+                    st.write(f"**Status:** {entry.get('status', 'approved').title()}")
+
+                st.markdown("**Assignments:**")
+                assignments = entry.get('assignments', {})
+                if assignments:
+                    # Group by line
+                    by_line = {}
+                    for name, line in assignments.items():
+                        if line > 0:
+                            if line not in by_line:
+                                by_line[line] = []
+                            by_line[line].append(name)
+
+                    for line_num in sorted(by_line.keys()):
+                        names = by_line[line_num]
+                        st.write(f"**Line {line_num}:** {', '.join(sorted(names))}")
+
+                # Delete button
+                if st.button(f"🗑️ Delete this record", key=f"delete_{entry['period']}"):
+                    st.session_state.roster_history = [
+                        e for e in st.session_state.roster_history
+                        if e['period'] != entry['period']
+                    ]
+                    data_storage.save_roster_history(st.session_state.roster_history)
+                    st.success(f"Deleted {entry['period']}")
+                    st.rerun()
+    else:
+        st.info("No approved rosters recorded yet. Use the form above to record approved roster assignments.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Section 3: Import from Current
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 🔄 Quick Actions")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("📥 Copy Current Roster to Approved", use_container_width=True):
+            # Quick way to record current roster as approved
+            period_name = f"{st.session_state.roster_start.strftime('%b')}-{st.session_state.roster_end.strftime('%b %Y')}"
+
+            roster_entry = {
+                'period': period_name,
+                'start_date': st.session_state.roster_start.isoformat(),
+                'end_date': st.session_state.roster_end.isoformat(),
+                'assignments': dict(st.session_state.current_roster),
+                'approved_date': datetime.now().isoformat(),
+                'status': 'approved'
+            }
+
+            # Check if exists
+            existing_idx = None
+            for idx, entry in enumerate(st.session_state.roster_history):
+                if entry['period'] == period_name:
+                    existing_idx = idx
+                    break
+
+            if existing_idx is not None:
+                st.session_state.roster_history[existing_idx] = roster_entry
+            else:
+                st.session_state.roster_history.append(roster_entry)
+
+            data_storage.save_roster_history(st.session_state.roster_history)
+            st.success(f"✅ Current roster saved as approved for {period_name}")
+            st.rerun()
+
+    with col2:
+        if st.button("🔄 Refresh from Storage", use_container_width=True):
+            st.session_state.roster_history = data_storage.load_roster_history()
+            st.success("✅ Reloaded roster history from storage")
+            st.rerun()
+
+
 # Main app
 def request_history_page():
     """Page to view request history and priority scores"""
@@ -2089,7 +2323,7 @@ def main():
     
     page = st.sidebar.radio(
         "Navigation",
-        ["👥 Staff Management", "📅 Current Roster", "🔔 Staff Request", "👔 Manager: Create Roster", "📊 Request History", "🔍 Line Explorer"]
+        ["👥 Staff Management", "📅 Current Roster", "🔔 Staff Request", "👔 Manager: Create Roster", "📜 Roster History", "📊 Request History", "🔍 Line Explorer"]
     )
     
     st.sidebar.markdown("---")
@@ -2240,6 +2474,8 @@ def main():
         staff_request_page()
     elif page == "👔 Manager: Create Roster":
         manager_roster_page()
+    elif page == "📜 Roster History":
+        roster_history_page()
     elif page == "📊 Request History":
         request_history_page()
     else:

@@ -246,6 +246,71 @@ class GoogleSheetsStorage:
         except Exception as e:
             st.error(f"Error clearing data: {e}")
             return False
+
+    def save_roster_history(self, roster_history: List[dict]) -> bool:
+        """
+        Save approved roster history to Google Sheets
+
+        Each entry: {
+            'period': 'Jan-Mar 2026',
+            'start_date': '2026-01-24',
+            'end_date': '2026-03-27',
+            'assignments': {'Staff Name': line_number, ...},
+            'approved_date': '2026-01-20',
+            'status': 'approved'  # or 'draft'
+        }
+        """
+        try:
+            # Try to get or create the sheet
+            try:
+                sheet = self.spreadsheet.worksheet("Roster_History")
+            except:
+                sheet = self.spreadsheet.add_worksheet(title="Roster_History", rows=100, cols=10)
+
+            rows = [["period", "start_date", "end_date", "assignments_json", "approved_date", "status"]]
+            for entry in roster_history:
+                rows.append([
+                    entry.get('period', ''),
+                    entry.get('start_date', ''),
+                    entry.get('end_date', ''),
+                    json.dumps(entry.get('assignments', {})),
+                    entry.get('approved_date', ''),
+                    entry.get('status', 'draft')
+                ])
+
+            sheet.clear()
+            sheet.update('A1', rows)
+            return True
+        except Exception as e:
+            st.error(f"Error saving roster history: {e}")
+            return False
+
+    def load_roster_history(self) -> List[dict]:
+        """Load approved roster history from Google Sheets"""
+        try:
+            sheet = self.spreadsheet.worksheet("Roster_History")
+            rows = sheet.get_all_values()
+
+            if len(rows) <= 1:
+                return []
+
+            history = []
+            for row in rows[1:]:
+                if row[0]:  # Has period
+                    history.append({
+                        'period': row[0],
+                        'start_date': row[1],
+                        'end_date': row[2],
+                        'assignments': json.loads(row[3]) if row[3] else {},
+                        'approved_date': row[4] if len(row) > 4 else '',
+                        'status': row[5] if len(row) > 5 else 'approved'
+                    })
+
+            return history
+        except Exception as e:
+            # Sheet might not exist yet
+            return []
+
 # Create a singleton instance
 _storage = None
 
@@ -289,3 +354,13 @@ def load_request_history():
     """Load request histories"""
     storage = get_storage()
     return storage.load_request_history()
+
+def save_roster_history(roster_history):
+    """Save approved roster history"""
+    storage = get_storage()
+    return storage.save_roster_history(roster_history)
+
+def load_roster_history():
+    """Load approved roster history"""
+    storage = get_storage()
+    return storage.load_roster_history()
