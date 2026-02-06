@@ -1,4 +1,4 @@
-﻿"""
+"""
 Google Sheets storage backend for roster data
 Replaces JSON file storage with Google Sheets
 """
@@ -362,5 +362,8 @@ def save_roster_history(roster_history):
 
 def load_roster_history():
     """Load approved roster history"""
-    storage = get_storage()
-    return storage.load_roster_history()
+    try:
+        storage = get_storage()
+        return storage.load_roster_history()
+    except Exception:
+        return []

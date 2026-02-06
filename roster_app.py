@@ -150,7 +150,10 @@ if 'previous_roster_end' not in st.session_state:
 if 'request_histories' not in st.session_state:
     st.session_state.request_histories = {}
 if 'roster_history' not in st.session_state:
-    st.session_state.roster_history = data_storage.load_roster_history()
+    try:
+        st.session_state.roster_history = data_storage.load_roster_history()
+    except Exception:
+        st.session_state.roster_history = []
 
 
 def auto_save():
