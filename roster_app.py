@@ -1193,7 +1193,8 @@ def manager_roster_page():
                 })
 
         # Check 2: Friday night shift before Saturday leave
-        line_manager = RosterLineManager(st.session_state.roster_start)
+        from roster_lines import RosterLineManager as RLM
+        line_manager = RLM(st.session_state.roster_start)
         for staff in rotating_staff:
             if staff.leave_periods:
                 staff_line = st.session_state.current_roster.get(staff.name, 0)
@@ -1629,7 +1630,8 @@ def manager_roster_page():
                         generation_log.append(f"Line {staff.requested_line}: {staff.name} (requested)")
                     elif staff.requested_dates_off:
                         # Find best line for their date requests
-                        line_manager = RosterLineManager(st.session_state.roster_start)
+                        from roster_lines import RosterLineManager as RLM2
+                        line_manager = RLM2(st.session_state.roster_start)
 
                         # Check if current line works
                         if current_line > 0:
