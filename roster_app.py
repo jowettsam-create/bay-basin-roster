@@ -214,6 +214,10 @@ if 'initialized' not in st.session_state:
         st.session_state.roster_start = datetime(2026, 1, 24)  # Saturday Jan 24
         st.session_state.roster_end = datetime(2026, 3, 27)    # Friday Mar 27
         st.session_state.previous_roster_end = datetime(2026, 1, 23)  # Previous ended Fri Jan 23
+
+    # Calculate projected roster dates (next 9-week period after current)
+    st.session_state.projected_roster_start = st.session_state.roster_end + timedelta(days=1)
+    st.session_state.projected_roster_end = st.session_state.projected_roster_start + timedelta(days=62)  # 63 days total
     
     # Load roster history first
     try:
@@ -262,6 +266,11 @@ if 'roster_history' not in st.session_state:
         )
     except Exception:
         st.session_state.roster_history = []
+
+# Calculate projected roster dates if not already set
+if 'projected_roster_start' not in st.session_state or 'projected_roster_end' not in st.session_state:
+    st.session_state.projected_roster_start = st.session_state.roster_end + timedelta(days=1)
+    st.session_state.projected_roster_end = st.session_state.projected_roster_start + timedelta(days=62)
 
 
 def auto_save():
@@ -360,20 +369,16 @@ def current_roster_page():
     """Page to view and set the current roster (what lines people are currently on)"""
     st.markdown("<h1 class='main-header'>📅 Current Roster</h1>", unsafe_allow_html=True)
     
-    st.info("Set what line each staff member is currently on. When generating a new roster, staff will default to staying on their current line unless they request a change.")
-    
-    # Show previous roster period
-    col1, col2 = st.columns(2)
+    st.info("These are the line assignments for the **current active roster**. When generating the projected roster, staff will default to staying on their current line unless they request a change.")
+
+    # Show current roster period
+    col1, col2, col3 = st.columns(3)
     with col1:
-        prev_end = st.date_input(
-            "Previous Roster Period Ended",
-            value=st.session_state.previous_roster_end
-        )
-        st.session_state.previous_roster_end = datetime.combine(prev_end, datetime.min.time())
-    
+        st.write(f"**Current Roster Start:** {st.session_state.roster_start.strftime('%d/%m/%Y')}")
     with col2:
-        next_start = st.session_state.roster_start
-        st.write(f"**Next Roster Starts:** {next_start.strftime('%d/%m/%Y')}")
+        st.write(f"**Current Roster End:** {st.session_state.roster_end.strftime('%d/%m/%Y')}")
+    with col3:
+        st.write(f"**Projected Roster:** {st.session_state.projected_roster_start.strftime('%d/%m/%Y')} - {st.session_state.projected_roster_end.strftime('%d/%m/%Y')}")
     
     st.markdown("<h2 class='section-header'>Current Line Assignments</h2>", unsafe_allow_html=True)
     
@@ -827,7 +832,14 @@ def staff_management_page():
 def staff_request_page():
     """Page for staff to submit roster requests"""
     st.markdown("<h1 class='main-header'>🚑 Staff Roster Request</h1>", unsafe_allow_html=True)
-    
+
+    # Display projected roster period
+    st.info(f"""
+    **Making request for Projected Roster Period:**
+    {st.session_state.projected_roster_start.strftime('%d %b %Y')} - {st.session_state.projected_roster_end.strftime('%d %b %Y')}
+    _(Current roster: {st.session_state.roster_start.strftime('%d %b %Y')} - {st.session_state.roster_end.strftime('%d %b %Y')})_
+    """)
+
     if not st.session_state.staff_list:
         st.warning("⚠️ No staff in the system yet. Please add staff in the 'Staff Management' page first.")
         return
@@ -1186,32 +1198,31 @@ def staff_request_page():
 def manager_roster_page():
     """Page for managers to create and approve rosters"""
     st.markdown("<h1 class='main-header'>📋 Manager: Create Roster</h1>", unsafe_allow_html=True)
-    
+
+    # Display roster periods
+    st.info(f"""
+    **Generating roster for Projected Period:**
+    {st.session_state.projected_roster_start.strftime('%d %b %Y')} - {st.session_state.projected_roster_end.strftime('%d %b %Y')}
+    _(Current roster: {st.session_state.roster_start.strftime('%d %b %Y')} - {st.session_state.roster_end.strftime('%d %b %Y')} - cannot be changed)_
+    """)
+
     # Roster period settings
-    with st.expander("⚙️ Roster Period Settings", expanded=True):
-        col1, col2, col3 = st.columns(3)
-        
+    with st.expander("⚙️ Current Roster Period (Read-Only)", expanded=False):
+        col1, col2 = st.columns(2)
+
         with col1:
-            roster_start = st.date_input(
-                "Roster Start Date",
-                value=st.session_state.roster_start
-            )
-            st.session_state.roster_start = datetime.combine(roster_start, datetime.min.time())
-        
+            st.text_input("Current Roster Start", value=st.session_state.roster_start.strftime('%d %b %Y'), disabled=True)
+
         with col2:
-            roster_end = st.date_input(
-                "Roster End Date",
-                value=st.session_state.roster_end
-            )
-            st.session_state.roster_end = datetime.combine(roster_end, datetime.min.time())
-        
-        with col3:
-            min_coverage = st.number_input(
-                "Minimum Paramedics per Shift",
-                min_value=1,
-                max_value=10,
-                value=2
-            )
+            st.text_input("Current Roster End", value=st.session_state.roster_end.strftime('%d %b %Y'), disabled=True)
+
+    # Minimum coverage setting
+    min_coverage = st.number_input(
+        "Minimum Paramedics per Shift",
+        min_value=1,
+        max_value=10,
+        value=2
+    )
     
     # ══════════════════════════════════════════════════════════════════════════
     # LAYER 1: HARD RULES (Must never be violated)
@@ -1243,7 +1254,7 @@ def manager_roster_page():
 
         # Check 2: Friday night shift before Saturday leave
         from roster_lines import RosterLineManager as RLM
-        line_manager = RLM(st.session_state.roster_start)
+        line_manager = RLM(st.session_state.projected_roster_start)
         for staff in rotating_staff:
             if staff.leave_periods:
                 staff_line = st.session_state.current_roster.get(staff.name, 0)
@@ -1600,10 +1611,10 @@ def manager_roster_page():
             st.error("❌ No staff to roster! Add some staff requests first.")
         else:
             with st.spinner("Generating roster with priority-based assignment..."):
-                # Create roster object
+                # Create roster object for PROJECTED period
                 roster = RosterAssignment(
-                    st.session_state.roster_start,
-                    st.session_state.roster_end,
+                    st.session_state.projected_roster_start,
+                    st.session_state.projected_roster_end,
                     min_paramedics_per_shift=min_coverage
                 )
 
@@ -1616,7 +1627,7 @@ def manager_roster_page():
                 interns = [s for s in rotating_staff if s.role == "Intern"]
                 non_intern_rotating = [s for s in rotating_staff if s.role != "Intern"]
 
-                roster_period = f"{st.session_state.roster_start.strftime('%b')}-{st.session_state.roster_end.strftime('%b %Y')}"
+                roster_period = f"{st.session_state.projected_roster_start.strftime('%b')}-{st.session_state.projected_roster_end.strftime('%b %Y')}"
 
                 # Track final assignments: staff_name -> line_number
                 final_assignments = {}
@@ -1628,7 +1639,7 @@ def manager_roster_page():
                     staff_list=non_intern_rotating,
                     current_roster=st.session_state.current_roster,
                     request_histories=st.session_state.request_histories,
-                    roster_start=st.session_state.roster_start
+                    roster_start=st.session_state.projected_roster_start
                 )
                 conflicts = detector.detect_line_conflicts()
 
@@ -1680,7 +1691,7 @@ def manager_roster_page():
                     elif staff.requested_dates_off:
                         # Find best line for their date requests
                         from roster_lines import RosterLineManager as RLM2
-                        line_manager = RLM2(st.session_state.roster_start)
+                        line_manager = RLM2(st.session_state.projected_roster_start)
 
                         # Check if current line works
                         if current_line > 0:
@@ -1722,8 +1733,8 @@ def manager_roster_page():
                         staff_list=st.session_state.staff_list,
                         current_roster=st.session_state.current_roster,
                         request_histories=st.session_state.request_histories,
-                        roster_start=st.session_state.roster_start,
-                        roster_end=st.session_state.roster_end
+                        roster_start=st.session_state.projected_roster_start,
+                        roster_end=st.session_state.projected_roster_end
                     )
                     intern_assignments = intern_system.assign_interns()
 
@@ -1939,21 +1950,28 @@ def manager_roster_page():
 def line_explorer_page():
     """Page to explore roster lines and check transitions"""
     st.markdown("<h1 class='main-header'>🔍 Roster Line Explorer</h1>", unsafe_allow_html=True)
-    
-    manager = RosterLineManager(st.session_state.roster_start)
-    
+
+    # Display projected roster period
+    st.info(f"""
+    **Viewing Projected Roster Period**
+    {st.session_state.projected_roster_start.strftime('%d %b %Y')} - {st.session_state.projected_roster_end.strftime('%d %b %Y')}
+    _(Current roster: {st.session_state.roster_start.strftime('%d %b %Y')} - {st.session_state.roster_end.strftime('%d %b %Y')})_
+    """)
+
+    manager = RosterLineManager(st.session_state.projected_roster_start)
+
     st.markdown("<h2 class='section-header'>View Roster Lines</h2>", unsafe_allow_html=True)
-    
+
     st.info("Each line follows the DDNNOOOOO pattern (2 days, 2 nights, 5 off) but starts on different days")
     
     # Show all lines
     line_num = st.selectbox("Select Line to View", list(range(1, 10)))
-    
+
     line = manager.lines[line_num - 1]
-    
-    # Calculate roster length in days
-    roster_days = (st.session_state.roster_end - st.session_state.roster_start).days + 1
-    
+
+    # Calculate roster length in days (using projected roster)
+    roster_days = (st.session_state.projected_roster_end - st.session_state.projected_roster_start).days + 1
+
     # Options for how many days to view
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -1966,17 +1984,17 @@ def line_explorer_page():
         }
         selected_view = st.selectbox("View Period", list(view_options.keys()), index=2)
         days_to_show = view_options[selected_view]
-    
+
     with col2:
         st.metric("Roster Length", f"{roster_days} days")
-    
-    schedule = line.get_schedule(st.session_state.roster_start, days_to_show)
+
+    schedule = line.get_schedule(st.session_state.projected_roster_start, days_to_show)
     display_shift_calendar(schedule, f"Line {line_num} - {selected_view}")
-    
+
     # Award compliance check
     st.markdown("<h2 class='section-header'>Award Compliance Check</h2>", unsafe_allow_html=True)
-    
-    violations = line.validate_award_compliance(st.session_state.roster_start, days_to_show)
+
+    violations = line.validate_award_compliance(st.session_state.projected_roster_start, days_to_show)
     
     if violations:
         st.error("❌ Award Violations Detected")
@@ -2001,11 +2019,11 @@ def line_explorer_page():
         validator = RosterBoundaryValidator()
         current_line = manager.lines[current_line_num - 1]
         new_line = manager.lines[new_line_num - 1]
-        
+
         is_valid, message = validator.validate_line_transition(
             current_line,
             new_line,
-            st.session_state.roster_start
+            st.session_state.projected_roster_start
         )
         
         if is_valid:
@@ -2040,13 +2058,13 @@ def roster_history_page():
         with col1:
             approved_start = st.date_input(
                 "Roster Start Date",
-                value=st.session_state.roster_start,
+                value=st.session_state.projected_roster_start,
                 key="approved_start"
             )
         with col2:
             approved_end = st.date_input(
                 "Roster End Date",
-                value=st.session_state.roster_end,
+                value=st.session_state.projected_roster_end,
                 key="approved_end"
             )
 
@@ -2252,6 +2270,81 @@ def roster_history_page():
             st.success("✅ Reloaded roster history from storage")
             st.rerun()
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # Section 4: Advance to Next Roster Period
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## ⏭️ Advance to Next Roster Period")
+
+    st.caption(
+        "Once the projected roster has been approved and is ready to become the active roster, "
+        "use this to advance the dates forward. The projected roster becomes the current roster, "
+        "and new projected dates are calculated."
+    )
+
+    # Show what will happen
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Current State:**")
+        st.write(f"Current: {st.session_state.roster_start.strftime('%d %b %Y')} - {st.session_state.roster_end.strftime('%d %b %Y')}")
+        st.write(f"Projected: {st.session_state.projected_roster_start.strftime('%d %b %Y')} - {st.session_state.projected_roster_end.strftime('%d %b %Y')}")
+
+    new_projected_start = st.session_state.projected_roster_end + timedelta(days=1)
+    new_projected_end = new_projected_start + timedelta(days=62)
+
+    with col2:
+        st.markdown("**After Advance:**")
+        st.write(f"Current: {st.session_state.projected_roster_start.strftime('%d %b %Y')} - {st.session_state.projected_roster_end.strftime('%d %b %Y')}")
+        st.write(f"Projected: {new_projected_start.strftime('%d %b %Y')} - {new_projected_end.strftime('%d %b %Y')}")
+
+    # Find the approved roster entry that matches the projected period
+    projected_period_name = f"{st.session_state.projected_roster_start.strftime('%b')}-{st.session_state.projected_roster_end.strftime('%b %Y')}"
+    approved_entry = None
+    for entry in st.session_state.roster_history:
+        if entry.get('status') == 'approved' and entry.get('period') == projected_period_name:
+            approved_entry = entry
+            break
+
+    if approved_entry:
+        st.success(f"Found approved roster for **{projected_period_name}** - assignments will be applied.")
+    else:
+        st.warning(f"No approved roster found for **{projected_period_name}**. Current line assignments will be kept.")
+
+    # Confirmation with checkbox
+    confirm_advance = st.checkbox("I confirm I want to advance the roster period", key="confirm_advance")
+
+    if st.button("⏭️ Advance Roster Period", type="primary", use_container_width=True, disabled=not confirm_advance):
+        # 1. Store old current end as new previous_roster_end
+        st.session_state.previous_roster_end = st.session_state.roster_end
+
+        # 2. Move projected dates to current
+        st.session_state.roster_start = st.session_state.projected_roster_start
+        st.session_state.roster_end = st.session_state.projected_roster_end
+
+        # 3. Calculate new projected dates
+        st.session_state.projected_roster_start = st.session_state.roster_end + timedelta(days=1)
+        st.session_state.projected_roster_end = st.session_state.projected_roster_start + timedelta(days=62)
+
+        # 4. Apply approved roster assignments if available
+        if approved_entry:
+            assignments = approved_entry.get('assignments', {})
+            for staff_name, line_num in assignments.items():
+                if line_num > 0:
+                    st.session_state.current_roster[staff_name] = line_num
+
+        # 5. Clear any pending requests (they were for the now-current period)
+        # Staff will need to submit new requests for the new projected period
+
+        # 6. Save everything (auto_save handles staff, roster, settings, and request histories)
+        auto_save()
+
+        st.success(
+            f"✅ Roster period advanced!\n\n"
+            f"**Current:** {st.session_state.roster_start.strftime('%d %b %Y')} - {st.session_state.roster_end.strftime('%d %b %Y')}\n\n"
+            f"**Projected:** {st.session_state.projected_roster_start.strftime('%d %b %Y')} - {st.session_state.projected_roster_end.strftime('%d %b %Y')}"
+        )
+        st.rerun()
+
 
 # Main app
 def request_history_page():
@@ -2401,13 +2494,11 @@ def main():
     st.sidebar.caption(f"{current_days} days ({current_weeks:.1f} weeks)")
     
     st.sidebar.markdown("### Projected Roster Period")
-    # Next roster starts the day after current ends, runs for 63 days (9 weeks)
-    projected_start = st.session_state.roster_end + timedelta(days=1)
-    projected_end = projected_start + timedelta(days=62)  # 63 days total
-    
-    st.sidebar.write(f"**Start:** {projected_start.strftime('%d/%m/%Y')}")
-    st.sidebar.write(f"**End:** {projected_end.strftime('%d/%m/%Y')}")
-    st.sidebar.caption(f"63 days (9 weeks)")
+    st.sidebar.write(f"**Start:** {st.session_state.projected_roster_start.strftime('%d/%m/%Y')}")
+    st.sidebar.write(f"**End:** {st.session_state.projected_roster_end.strftime('%d/%m/%Y')}")
+    projected_days = (st.session_state.projected_roster_end - st.session_state.projected_roster_start).days + 1
+    projected_weeks = projected_days / 7
+    st.sidebar.caption(f"{projected_days} days ({projected_weeks:.1f} weeks)")
     
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**Staff Requests:** {len(st.session_state.staff_list)}")
@@ -2423,7 +2514,7 @@ def main():
             staff_list=rotating_staff,
             current_roster=st.session_state.current_roster,
             request_histories=st.session_state.request_histories,
-            roster_start=st.session_state.roster_start
+            roster_start=st.session_state.projected_roster_start
         )
         conflicts = detector.detect_line_conflicts()
         if conflicts:
