@@ -20,9 +20,99 @@ import google_sheets_storage as data_storage
 from excel_export import export_roster_to_excel
 
 # Request tracking system
-from request_history import RequestHistory, RequestRecord
+from request_history import RequestHistory, RequestRecord, LineAssignment
 from conflict_detector import ConflictDetector
 from intern_assignment import InternAssignmentSystem
+
+
+def rebuild_line_histories_from_roster_history(request_histories: Dict[str, RequestHistory],
+                                                roster_history: List[dict]) -> Dict[str, RequestHistory]:
+    """
+    Rebuild line_history for all staff based on historical roster data.
+    This ensures new staff members have proper tenure tracking even if they
+    were added via the Roster History page.
+
+    Args:
+        request_histories: Current request histories dict
+        roster_history: List of approved roster entries from storage
+
+    Returns:
+        Updated request_histories dict with populated line histories
+    """
+    if not roster_history:
+        return request_histories
+
+    # Sort roster history by start date (oldest first)
+    sorted_history = sorted(
+        roster_history,
+        key=lambda x: x.get('start_date', '9999-99-99')
+    )
+
+    # Track each staff member's line history
+    # Structure: {staff_name: [(period, line_number, start_date), ...]}
+    staff_line_history: Dict[str, List[tuple]] = {}
+
+    for entry in sorted_history:
+        period = entry.get('period', '')
+        start_date_str = entry.get('start_date', '')
+        assignments = entry.get('assignments', {})
+
+        for staff_name, line_number in assignments.items():
+            if line_number == 0:  # Skip unassigned
+                continue
+
+            if staff_name not in staff_line_history:
+                staff_line_history[staff_name] = []
+
+            staff_line_history[staff_name].append((period, line_number, start_date_str))
+
+    # Now update request histories based on this data
+    for staff_name, history_entries in staff_line_history.items():
+        # Get or create request history
+        if staff_name not in request_histories:
+            request_histories[staff_name] = RequestHistory(staff_name=staff_name)
+
+        history = request_histories[staff_name]
+
+        # Clear existing line_history if we have roster history data
+        # (roster history is the source of truth)
+        if history_entries:
+            # Rebuild line_history from roster history
+            history.line_history = []
+
+            previous_line = None
+            rosters_on_line = 0
+
+            for period, line_number, start_date_str in history_entries:
+                # Parse start date
+                try:
+                    start_date = datetime.fromisoformat(start_date_str)
+                except:
+                    start_date = datetime.now()
+
+                # Add to line history
+                assignment = LineAssignment(
+                    roster_period=period,
+                    line_number=line_number,
+                    start_date=start_date,
+                    change_reason="approved_roster"
+                )
+                history.line_history.append(assignment)
+
+                # Track tenure on current line
+                if line_number == previous_line:
+                    rosters_on_line += 1
+                else:
+                    rosters_on_line = 1
+                    previous_line = line_number
+
+            # Set current line info based on most recent entry
+            if history_entries:
+                latest_period, latest_line, _ = history_entries[-1]
+                history.current_line = latest_line
+                history.rosters_on_current_line = rosters_on_line
+
+    return request_histories
 
 # Page config
 st.set_page_config(
@@ -125,13 +215,26 @@ if 'initialized' not in st.session_state:
         st.session_state.roster_end = datetime(2026, 3, 27)    # Friday Mar 27
         st.session_state.previous_roster_end = datetime(2026, 1, 23)  # Previous ended Fri Jan 23
     
+    # Load roster history first
+    try:
+        st.session_state.roster_history = data_storage.load_roster_history()
+    except Exception:
+        st.session_state.roster_history = []
+
     # Load request histories
     hist_data = data_storage.load_request_history()
     st.session_state.request_histories = {
-        name: RequestHistory.from_dict(data) 
+        name: RequestHistory.from_dict(data)
         for name, data in hist_data.items()
     }
-    
+
+    # Rebuild line histories from roster history to ensure proper tenure tracking
+    # This ensures new staff members have their line_history populated correctly
+    st.session_state.request_histories = rebuild_line_histories_from_roster_history(
+        st.session_state.request_histories,
+        st.session_state.roster_history
+    )
+
     st.session_state.roster = None
 
 # Ensure all required keys exist
@@ -152,6 +255,11 @@ if 'request_histories' not in st.session_state:
 if 'roster_history' not in st.session_state:
     try:
         st.session_state.roster_history = data_storage.load_roster_history()
+        # Also rebuild line histories when roster_history is loaded
+        st.session_state.request_histories = rebuild_line_histories_from_roster_history(
+            st.session_state.request_histories,
+            st.session_state.roster_history
+        )
     except Exception:
         st.session_state.roster_history = []
 
@@ -2032,6 +2140,13 @@ def roster_history_page():
                                 history.approve_request(idx, {'assigned_line': assigned_line})
                             else:
                                 history.deny_request(idx, f"Approved roster assigned Line {assigned_line}")
+
+                # Rebuild line histories from the complete roster history
+                # This ensures tenure tracking is calculated correctly across ALL rosters
+                st.session_state.request_histories = rebuild_line_histories_from_roster_history(
+                    st.session_state.request_histories,
+                    st.session_state.roster_history
+                )
 
                 # Save everything
                 data_storage.save_roster_history(st.session_state.roster_history)
