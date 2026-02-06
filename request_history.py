@@ -161,12 +161,19 @@ class RequestHistory:
         # Line tenure bonus: protection for staying on current line
         if not is_requesting_change:
             # They want to STAY on their current line
-            if self.rosters_on_current_line < 2:
-                line_tenure_bonus = 50  # Strong protection
+            # New staff (no line_history) should get MAXIMUM protection
+            # rosters_on_current_line: 0 or 1 = strong protection (new or first roster)
+            #                          2 = moderate protection
+            #                          3+ = no protection (fair game)
+            if not self.line_history:
+                # Brand new staff with no roster history - maximum protection
+                line_tenure_bonus = 50
+            elif self.rosters_on_current_line <= 1:
+                line_tenure_bonus = 50  # Strong protection (first or second roster on this line)
             elif self.rosters_on_current_line == 2:
                 line_tenure_bonus = 25  # Moderate protection
             else:
-                line_tenure_bonus = 0   # Fair game
+                line_tenure_bonus = 0   # Fair game (3+ rosters)
         else:
             # They want to CHANGE lines
             line_tenure_bonus = 0
