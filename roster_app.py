@@ -762,30 +762,30 @@ def staff_request_page():
     if not history:
         history = RequestHistory(staff_name=selected_name)
         st.session_state.request_histories[selected_name] = history
-    
+
     # Update current line info in history
     if history.current_line != current_line and current_line > 0:
         history.current_line = current_line
         if not history.line_history or history.line_history[-1].line_number != current_line:
             history.rosters_on_current_line = 1
-    
+
     # Calculate and show priority
     is_intern = selected_staff.role == "Intern"
     priority_stay = history.calculate_priority_score(is_requesting_change=False, staff_role=selected_staff.role)
     priority_change = history.calculate_priority_score(is_requesting_change=True, staff_role=selected_staff.role)
-    
+
     # Show priority box
     st.markdown("<h2 class='section-header'>Your Priority Status</h2>", unsafe_allow_html=True)
-    
+
     if is_intern:
         st.info(f"""
-**Role:** {selected_staff.role}  
-**Current Line:** {'Line ' + str(current_line) if current_line > 0 else 'Not assigned'}  
+**Role:** {selected_staff.role}
+**Current Line:** {'Line ' + str(current_line) if current_line > 0 else 'Not assigned'}
 **Your Priority:** 🔵 {priority_change:.0f} (Intern - rotation based)
 
 ℹ️ As an intern, you're in a rotation program. The system will assign you to work with different paramedics each roster for learning exposure.
         """)
-        
+
         # Show mentor history
         if history.mentors_worked_with:
             st.write("**Previous Mentors:**")
@@ -796,7 +796,7 @@ def staff_request_page():
         # Create priority display
         months_since = history._get_months_since_last_approval()
         success_rate = f"{history.total_requests_approved}/{history.total_requests_submitted}" if history.total_requests_submitted > 0 else "0/0"
-        
+
         col1, col2, col3 = st.columns(3)
         with col1:
             priority_level = "🟢 High" if priority_stay >= 150 else "🟡 Medium" if priority_stay >= 80 else "🟠 Low"
@@ -809,76 +809,17 @@ def staff_request_page():
         with col3:
             st.metric("Success Rate", success_rate)
             st.caption(f"Last approval: {months_since} months ago")
-        
-        # Tenure protection message
-        if history.rosters_on_current_line < 2:
-            st.success(f"✅ Tenure protection active: You've been on Line {current_line} for {history.rosters_on_current_line} roster(s)")
-        elif history.rosters_on_current_line == 2:
-            st.info(f"ℹ️ Moderate protection: You've been on Line {current_line} for 2 rosters")
-        elif history.rosters_on_current_line > 2:
-            st.warning(f"⚠️ No tenure protection: You've been on Line {current_line} for {history.rosters_on_current_line}+ rosters")
-    
-    # Get or create request history
-    history = st.session_state.request_histories.get(selected_name)
-    if not history:
-        history = RequestHistory(staff_name=selected_name)
-        st.session_state.request_histories[selected_name] = history
-    
-    # Update current line info in history
-    if history.current_line != current_line and current_line > 0:
-        history.current_line = current_line
-        if not history.line_history or history.line_history[-1].line_number != current_line:
-            history.rosters_on_current_line = 1
-    
-    # Calculate and show priority
-    is_intern = selected_staff.role == "Intern"
-    priority_stay = history.calculate_priority_score(is_requesting_change=False, staff_role=selected_staff.role)
-    priority_change = history.calculate_priority_score(is_requesting_change=True, staff_role=selected_staff.role)
-    
-    # Show priority box
-    st.markdown("<h2 class='section-header'>Your Priority Status</h2>", unsafe_allow_html=True)
-    
-    if is_intern:
-        st.info(f"""
-**Role:** {selected_staff.role}  
-**Current Line:** {'Line ' + str(current_line) if current_line > 0 else 'Not assigned'}  
-**Your Priority:** 🔵 {priority_change:.0f} (Intern - rotation based)
 
-ℹ️ As an intern, you're in a rotation program. The system will assign you to work with different paramedics each roster for learning exposure.
-        """)
-        
-        # Show mentor history
-        if history.mentors_worked_with:
-            st.write("**Previous Mentors:**")
-            for mentor, period, shifts in history.mentors_worked_with[-3:]:
-                current_marker = " ← Current" if (mentor, period, shifts) == history.mentors_worked_with[-1] else ""
-                st.write(f"• {mentor} ({period}) - {shifts} shifts{current_marker}")
-    else:
-        # Create priority display
-        months_since = history._get_months_since_last_approval()
-        success_rate = f"{history.total_requests_approved}/{history.total_requests_submitted}" if history.total_requests_submitted > 0 else "0/0"
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            priority_level = "🟢 High" if priority_stay >= 150 else "🟡 Medium" if priority_stay >= 80 else "🟠 Low"
-            st.metric("Priority (Stay)", f"{priority_stay:.0f}", help="Your priority to stay on current line")
-            st.caption(priority_level)
-        with col2:
-            priority_level = "🟢 High" if priority_change >= 150 else "🟡 Medium" if priority_change >= 80 else "🟠 Low"
-            st.metric("Priority (Change)", f"{priority_change:.0f}", help="Your priority to change lines")
-            st.caption(priority_level)
-        with col3:
-            st.metric("Success Rate", success_rate)
-            st.caption(f"Last approval: {months_since} months ago")
-        
-        # Tenure protection message
-        if history.rosters_on_current_line < 2:
-            st.success(f"✅ Tenure protection active: You've been on Line {current_line} for {history.rosters_on_current_line} roster(s)")
+        # Tenure protection message - check for new staff (no line_history)
+        if not history.line_history:
+            st.success(f"✅ New staff - maximum tenure protection (first roster)")
+        elif history.rosters_on_current_line <= 1:
+            st.success(f"✅ Tenure protection active: First/second roster on Line {current_line}")
         elif history.rosters_on_current_line == 2:
             st.info(f"ℹ️ Moderate protection: You've been on Line {current_line} for 2 rosters")
-        elif history.rosters_on_current_line > 2:
+        else:
             st.warning(f"⚠️ No tenure protection: You've been on Line {current_line} for {history.rosters_on_current_line}+ rosters")
-    
+
     st.markdown("<h2 class='section-header'>Leave Period</h2>", unsafe_allow_html=True)
     
     # Check leave BEFORE request type so we can use it in line validation
@@ -2259,13 +2200,16 @@ def request_history_page():
             success_rate = f"{history.total_requests_approved}/{history.total_requests_submitted}" if history.total_requests_submitted > 0 else "0/0"
             st.metric("Success Rate", success_rate)
         
-        if history.rosters_on_current_line < 2:
-            st.success(f"✅ Tenure protection active: You've been on Line {current_line} for {history.rosters_on_current_line} roster(s)")
+        # Tenure protection message - check for new staff (no line_history)
+        if not history.line_history:
+            st.success(f"✅ New staff - maximum tenure protection (first roster)")
+        elif history.rosters_on_current_line <= 1:
+            st.success(f"✅ Tenure protection active: First/second roster on Line {current_line}")
         elif history.rosters_on_current_line == 2:
             st.info(f"ℹ️ Moderate protection: You've been on Line {current_line} for 2 rosters")
         else:
             st.warning(f"⚠️ No tenure protection: You've been on Line {current_line} for {history.rosters_on_current_line}+ rosters")
-    
+
     # Line history
     st.markdown("<h2 class='section-header'>Line Assignment History</h2>", unsafe_allow_html=True)
     
