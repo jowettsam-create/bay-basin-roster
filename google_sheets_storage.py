@@ -311,15 +311,11 @@ class GoogleSheetsStorage:
             # Sheet might not exist yet
             return []
 
-# Create a singleton instance
-_storage = None
-
+# Create a singleton instance using Streamlit's caching
+@st.cache_resource(show_spinner="Connecting to Google Sheets...")
 def get_storage():
-    """Get or create storage instance"""
-    global _storage
-    if _storage is None:
-        _storage = GoogleSheetsStorage()
-    return _storage
+    """Get or create storage instance (cached across reruns)"""
+    return GoogleSheetsStorage()
 
 # Wrapper functions to match old data_storage.py interface
 def save_all(staff_list, current_roster, roster_start, roster_end, previous_roster_end):
@@ -329,16 +325,23 @@ def save_all(staff_list, current_roster, roster_start, roster_end, previous_rost
 
 def load_all():
     """Load all data - matches old interface"""
-    storage = get_storage()
-    staff_list = storage.load_staff()
-    current_roster = storage.load_current_roster()
-    roster_start, roster_end, previous_roster_end = storage.load_settings()
-    return staff_list, current_roster, roster_start, roster_end, previous_roster_end
+    try:
+        storage = get_storage()
+        staff_list = storage.load_staff()
+        current_roster = storage.load_current_roster()
+        roster_start, roster_end, previous_roster_end = storage.load_settings()
+        return staff_list, current_roster, roster_start, roster_end, previous_roster_end
+    except Exception as e:
+        st.warning(f"Could not load data from Google Sheets: {e}")
+        return [], {}, datetime(2026, 1, 24), datetime(2026, 3, 27), datetime(2026, 1, 23)
 
 def data_exists():
     """Check if data exists - matches old interface"""
-    storage = get_storage()
-    return storage.data_exists()
+    try:
+        storage = get_storage()
+        return storage.data_exists()
+    except Exception:
+        return False
 
 def clear_all_data():
     """Clear all data - matches old interface"""
