@@ -9,7 +9,7 @@ from typing import List, Dict
 import pandas as pd
 
 from roster_lines import RosterLine, RosterLineManager
-from roster_assignment import RosterAssignment, StaffMember
+from roster_assignment import RosterAssignment, StaffMember, CoverageAnalyzer
 from roster_boundary_validator import RosterBoundaryValidator
 from fixed_roster_helper import (
     create_fixed_roster_from_days,
@@ -1633,6 +1633,27 @@ def manager_roster_page():
                 final_assignments = {}
                 # Track generation notes for display
                 generation_log = []
+                # Track requests denied specifically for coverage
+                coverage_denials = 0
+
+                # ── Step 0: Build baseline coverage ──
+                # Everyone starts on their current line as a baseline
+                baseline_assignments = {}
+                for staff in rotating_staff:
+                    cur = st.session_state.current_roster.get(staff.name, 0)
+                    if cur > 0:
+                        baseline_assignments[staff.name] = cur
+
+                cov_line_manager = RosterLineManager(st.session_state.projected_roster_start)
+                coverage_analyzer = CoverageAnalyzer(
+                    staff_list=st.session_state.staff_list,
+                    line_manager=cov_line_manager,
+                    roster_start=st.session_state.projected_roster_start,
+                    roster_end=st.session_state.projected_roster_end,
+                    min_coverage=min_coverage
+                )
+                # Working assignments built up incrementally
+                working_assignments = dict(baseline_assignments)
 
                 # ── Step 1: Detect conflicts among non-intern rotating staff ──
                 detector = ConflictDetector(
@@ -1652,30 +1673,53 @@ def manager_roster_page():
                     winner = conflict.get_winner()
                     losers = conflict.get_losers()
 
-                    # Assign the winner
+                    # Assign the winner (priority earned; coverage issues addressed via loser placement)
+                    working_assignments[winner.name] = conflict.line_number
                     final_assignments[winner.name] = conflict.line_number
                     conflict_handled.add(winner.name)
                     generation_log.append(f"Line {conflict.line_number}: {winner.name} wins (priority)")
 
-                    # Handle losers - find alternatives
+                    # Handle losers - find coverage-safe alternatives
                     for loser in losers:
                         conflict_handled.add(loser.name)
-                        # Lines to avoid: the conflicted line + lines already assigned
+                        current_line = st.session_state.current_roster.get(loser.name, 0)
                         unavailable = [conflict.line_number] + [l for l in final_assignments.values()]
                         alternatives = detector.suggest_alternatives(loser, unavailable)
 
-                        if alternatives:
-                            alt_line = alternatives[0][0]
-                            final_assignments[loser.name] = alt_line
-                            generation_log.append(f"Line {alt_line}: {loser.name} (moved from conflict on Line {conflict.line_number})")
+                        best_alt = None
+                        best_delta = float('inf')
+
+                        # Try each suggested alternative, prefer coverage-safe ones
+                        for alt_line, reason in alternatives:
+                            from_line = current_line if current_line > 0 else 0
+                            result = coverage_analyzer.evaluate_move(working_assignments, loser.name, from_line, alt_line)
+                            if result['delta'] <= 0:
+                                best_alt = alt_line
+                                best_delta = 0
+                                break
+                            elif result['delta'] < best_delta:
+                                best_delta = result['delta']
+                                best_alt = alt_line
+
+                        # Staying on current line might be safest for coverage
+                        if current_line > 0 and best_delta > 0:
+                            best_alt = current_line
+                            generation_log.append(f"Line {current_line}: {loser.name} (kept for coverage, lost conflict on Line {conflict.line_number})")
+                            coverage_denials += 1
+                        elif best_alt:
+                            generation_log.append(f"Line {best_alt}: {loser.name} (moved from conflict on Line {conflict.line_number})")
                         else:
-                            # Fallback: find any unassigned line
-                            assigned_lines = set(final_assignments.values())
-                            for ln in range(1, 10):
-                                if ln not in assigned_lines:
-                                    final_assignments[loser.name] = ln
-                                    generation_log.append(f"Line {ln}: {loser.name} (fallback from conflict on Line {conflict.line_number})")
+                            # Fallback: use coverage-ranked lines
+                            ranked = coverage_analyzer.rank_lines_by_coverage_need(working_assignments)
+                            for ln, benefit in ranked:
+                                if ln != conflict.line_number:
+                                    best_alt = ln
+                                    generation_log.append(f"Line {ln}: {loser.name} (fallback, coverage-ranked)")
                                     break
+
+                        if best_alt:
+                            working_assignments[loser.name] = best_alt
+                            final_assignments[loser.name] = best_alt
 
                 # ── Step 2: Assign non-intern staff not involved in conflicts ──
                 for staff in non_intern_rotating:
@@ -1685,60 +1729,92 @@ def manager_roster_page():
                     current_line = st.session_state.current_roster.get(staff.name, 0)
 
                     if staff.requested_line:
-                        # Direct line request with no conflict
-                        final_assignments[staff.name] = staff.requested_line
-                        generation_log.append(f"Line {staff.requested_line}: {staff.name} (requested)")
+                        # Direct line request — check coverage before allowing
+                        from_line = current_line if current_line > 0 else 0
+                        if from_line and from_line != staff.requested_line and not coverage_analyzer.is_move_safe(working_assignments, staff.name, from_line, staff.requested_line):
+                            # Request denied for coverage — keep on current line
+                            working_assignments[staff.name] = current_line
+                            final_assignments[staff.name] = current_line
+                            generation_log.append(f"Line {current_line}: {staff.name} (request for Line {staff.requested_line} denied - coverage)")
+                            coverage_denials += 1
+                        else:
+                            working_assignments[staff.name] = staff.requested_line
+                            final_assignments[staff.name] = staff.requested_line
+                            generation_log.append(f"Line {staff.requested_line}: {staff.name} (requested)")
                     elif staff.requested_dates_off:
                         # Find best line for their date requests
-                        from roster_lines import RosterLineManager as RLM2
-                        line_manager = RLM2(st.session_state.projected_roster_start)
+                        line_manager = RosterLineManager(st.session_state.projected_roster_start)
 
                         # Check if current line works
                         if current_line > 0:
                             current_line_obj = line_manager.lines[current_line - 1]
                             if current_line_obj.has_days_off(staff.requested_dates_off):
+                                working_assignments[staff.name] = current_line
                                 final_assignments[staff.name] = current_line
                                 generation_log.append(f"Line {current_line}: {staff.name} (current line fits dates)")
                                 continue
 
-                        # Find best fitting line
+                        # Find best fitting line with coverage check
                         ranked = line_manager.rank_lines_by_fit(staff.requested_dates_off)
-                        assigned_lines = set(final_assignments.values())
                         placed = False
                         for line_obj, date_conflicts in ranked:
-                            if line_obj.line_number not in assigned_lines or date_conflicts == 0:
-                                final_assignments[staff.name] = line_obj.line_number
-                                generation_log.append(f"Line {line_obj.line_number}: {staff.name} (best date fit, {date_conflicts} conflict(s))")
+                            candidate = line_obj.line_number
+                            from_line = current_line if current_line > 0 else 0
+                            if from_line and from_line != candidate and not coverage_analyzer.is_move_safe(working_assignments, staff.name, from_line, candidate):
+                                continue  # Skip this option, would hurt coverage
+                            if date_conflicts == 0 or candidate not in set(final_assignments.values()):
+                                working_assignments[staff.name] = candidate
+                                final_assignments[staff.name] = candidate
+                                generation_log.append(f"Line {candidate}: {staff.name} (best date fit, {date_conflicts} conflict(s))")
                                 placed = True
                                 break
                         if not placed and current_line > 0:
+                            working_assignments[staff.name] = current_line
                             final_assignments[staff.name] = current_line
-                            generation_log.append(f"Line {current_line}: {staff.name} (kept on current, no better date fit)")
+                            generation_log.append(f"Line {current_line}: {staff.name} (kept on current - coverage/date constraints)")
+                            coverage_denials += 1
                     elif current_line > 0:
                         # No request - stay on current line
+                        working_assignments[staff.name] = current_line
                         final_assignments[staff.name] = current_line
                         generation_log.append(f"Line {current_line}: {staff.name} (no change)")
                     else:
-                        # No current line and no request - find any open line
-                        assigned_lines = set(final_assignments.values())
-                        for ln in range(1, 10):
-                            if ln not in assigned_lines:
-                                final_assignments[staff.name] = ln
-                                generation_log.append(f"Line {ln}: {staff.name} (auto-assigned, no prior line)")
-                                break
+                        # No current line and no request - assign to line with most coverage need
+                        ranked = coverage_analyzer.rank_lines_by_coverage_need(working_assignments)
+                        for ln, benefit in ranked:
+                            working_assignments[staff.name] = ln
+                            final_assignments[staff.name] = ln
+                            generation_log.append(f"Line {ln}: {staff.name} (auto-assigned, coverage-ranked)")
+                            break
 
                 # ── Step 3: Assign interns using rotation system ──
                 if interns:
+                    # Build coverage need data for intern scoring bonus
+                    cov_map = coverage_analyzer.build_coverage_map(working_assignments)
+                    line_coverage_needs = {}
+                    for ln in range(1, 10):
+                        line_obj = cov_line_manager.lines[ln - 1]
+                        shortfall_days = 0
+                        d = st.session_state.projected_roster_start
+                        while d <= st.session_state.projected_roster_end:
+                            shift = line_obj.get_shift_type(d)
+                            if shift in ('D', 'N') and cov_map[d][shift] < min_coverage:
+                                shortfall_days += 1
+                            d += timedelta(days=1)
+                        line_coverage_needs[ln] = shortfall_days
+
                     intern_system = InternAssignmentSystem(
                         staff_list=st.session_state.staff_list,
-                        current_roster=st.session_state.current_roster,
+                        current_roster=working_assignments,
                         request_histories=st.session_state.request_histories,
                         roster_start=st.session_state.projected_roster_start,
                         roster_end=st.session_state.projected_roster_end
                     )
+                    intern_system.line_coverage_needs = line_coverage_needs
                     intern_assignments = intern_system.assign_interns()
 
                     for intern_name, line_num in intern_assignments.items():
+                        working_assignments[intern_name] = line_num
                         final_assignments[intern_name] = line_num
                         generation_log.append(f"Line {line_num}: {intern_name} (intern rotation)")
 
@@ -1788,8 +1864,15 @@ def manager_roster_page():
                         if got_what_they_wanted:
                             history.approve_request(pending_idx, {'assigned_line': assigned_line})
                         else:
+                            # Check if this was a coverage denial by looking at the generation log
+                            was_coverage = any(
+                                staff.name in entry and 'coverage' in entry.lower()
+                                for entry in generation_log
+                            )
                             reason = f"Assigned to Line {assigned_line} instead"
-                            if req.request_type == 'line_change':
+                            if was_coverage:
+                                reason = f"Coverage constraint - staffing levels require you on Line {assigned_line}"
+                            elif req.request_type == 'line_change':
                                 reason = f"Line {req.request_details.get('requested_line')} conflict - assigned Line {assigned_line}"
                             elif req.request_type == 'stay_on_line':
                                 reason = f"Could not stay on Line {req.request_details.get('stay_on_line')} - assigned Line {assigned_line}"
@@ -1816,6 +1899,17 @@ def manager_roster_page():
 
                 if interns:
                     st.info(f"Assigned {len(interns)} intern(s) using mentor rotation")
+
+                if coverage_denials > 0:
+                    st.warning(f"⚠️ {coverage_denials} request(s) denied to maintain minimum coverage")
+
+                # Show final coverage check
+                final_cov_map = coverage_analyzer.build_coverage_map(final_assignments)
+                final_shortfalls = coverage_analyzer.count_shortfalls(final_cov_map)
+                if final_shortfalls > 0:
+                    st.warning(f"⚠️ {final_shortfalls} shift shortfall(s) remain (understaffed periods may be unavoidable)")
+                else:
+                    st.success(f"All shifts meet minimum coverage of {min_coverage}")
 
                 with st.expander("Generation Log"):
                     for entry in generation_log:

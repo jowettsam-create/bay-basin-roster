@@ -394,6 +394,116 @@ class RosterAssignment:
               f"Avg: {sum(night_coverages)/len(night_coverages):.1f}")
 
 
+class CoverageAnalyzer:
+    """Evaluates shift coverage for hypothetical line assignments without mutating state."""
+
+    def __init__(self, staff_list: List[StaffMember], line_manager,
+                 roster_start: datetime, roster_end: datetime, min_coverage: int = 2):
+        self.staff_list = staff_list
+        self.line_manager = line_manager
+        self.roster_start = roster_start
+        self.roster_end = roster_end
+        self.min_coverage = min_coverage
+        # Pre-compute date range once
+        self._dates = []
+        d = roster_start
+        while d <= roster_end:
+            self._dates.append(d)
+            d += timedelta(days=1)
+
+    def build_coverage_map(self, assignments: Dict[str, int]) -> Dict[datetime, Dict[str, int]]:
+        """Build day-by-day coverage {date: {'D': count, 'N': count}} for a set of assignments."""
+        coverage = {d: {'D': 0, 'N': 0} for d in self._dates}
+
+        for staff in self.staff_list:
+            if staff.is_fixed_roster:
+                for d in self._dates:
+                    if staff.is_on_leave(d):
+                        continue
+                    shift = staff.get_fixed_shift(d)
+                    if shift in ('D', 'N'):
+                        coverage[d][shift] += 1
+            else:
+                line_num = assignments.get(staff.name, 0)
+                if line_num < 1 or line_num > 9:
+                    continue
+                line_obj = self.line_manager.lines[line_num - 1]
+                for d in self._dates:
+                    if staff.is_on_leave(d):
+                        continue
+                    shift = line_obj.get_shift_type(d)
+                    if shift in ('D', 'N'):
+                        coverage[d][shift] += 1
+        return coverage
+
+    def count_shortfalls(self, coverage_map: Dict[datetime, Dict[str, int]]) -> int:
+        """Total shifts below minimum across all dates."""
+        total = 0
+        for d in self._dates:
+            for shift_type in ('D', 'N'):
+                count = coverage_map[d][shift_type]
+                if count < self.min_coverage:
+                    total += self.min_coverage - count
+        return total
+
+    def evaluate_move(self, assignments: Dict[str, int], staff_name: str,
+                      from_line: int, to_line: int) -> dict:
+        """Compare shortfalls before vs after moving one person."""
+        before_map = self.build_coverage_map(assignments)
+        before = self.count_shortfalls(before_map)
+
+        test = dict(assignments)
+        test[staff_name] = to_line
+        after_map = self.build_coverage_map(test)
+        after = self.count_shortfalls(after_map)
+
+        new_gaps = []
+        for d in self._dates:
+            for st in ('D', 'N'):
+                if after_map[d][st] < self.min_coverage and before_map[d][st] >= self.min_coverage:
+                    new_gaps.append((d, st))
+
+        return {'before': before, 'after': after, 'delta': after - before, 'new_gaps': new_gaps}
+
+    def is_move_safe(self, assignments: Dict[str, int], staff_name: str,
+                     from_line: int, to_line: int) -> bool:
+        """True if the move doesn't increase shortfalls."""
+        return self.evaluate_move(assignments, staff_name, from_line, to_line)['delta'] <= 0
+
+    def rank_lines_by_coverage_need(self, assignments: Dict[str, int]) -> List[Tuple[int, int]]:
+        """Rank lines 1-9 by how much adding a person would reduce shortfalls (most needed first)."""
+        coverage_map = self.build_coverage_map(assignments)
+        base_shortfalls = self.count_shortfalls(coverage_map)
+
+        line_benefits = []
+        for line_num in range(1, 10):
+            # Simulate adding a dummy person on this line
+            dummy_name = f"__coverage_probe_{line_num}__"
+            test = dict(assignments)
+            test[dummy_name] = line_num
+            # We need a temporary staff member for the probe
+            test_map = self._build_coverage_for_line(coverage_map, line_num)
+            test_shortfalls = self.count_shortfalls(test_map)
+            benefit = base_shortfalls - test_shortfalls
+            line_benefits.append((line_num, benefit))
+
+        # Sort by benefit descending (most needed first)
+        line_benefits.sort(key=lambda x: x[1], reverse=True)
+        return line_benefits
+
+    def _build_coverage_for_line(self, base_coverage_map: Dict[datetime, Dict[str, int]],
+                                  line_num: int) -> Dict[datetime, Dict[str, int]]:
+        """Copy coverage map and add one extra person on the given line (no leave)."""
+        import copy
+        new_map = {d: dict(shifts) for d, shifts in base_coverage_map.items()}
+        line_obj = self.line_manager.lines[line_num - 1]
+        for d in self._dates:
+            shift = line_obj.get_shift_type(d)
+            if shift in ('D', 'N'):
+                new_map[d][shift] += 1
+        return new_map
+
+
 def demo():
     """Demonstration of the roster assignment system"""
     

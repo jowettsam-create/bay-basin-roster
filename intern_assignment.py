@@ -31,6 +31,8 @@ class InternAssignmentSystem:
         # Separate interns and paramedics
         self.interns = [s for s in staff_list if s.role == "Intern" and not s.is_fixed_roster]
         self.paramedics = [s for s in staff_list if s.role == "Paramedic" and not s.is_fixed_roster]
+        # Optional: {line_num: shortfall_days} set by caller to nudge interns toward understaffed lines
+        self.line_coverage_needs: Dict[int, int] = {}
     
     def assign_interns(self) -> Dict[str, int]:
         """
@@ -188,6 +190,11 @@ class InternAssignmentSystem:
             else:
                 score -= 20
                 reasons.append("No paramedic mentors found")
+
+            # Coverage bonus: nudge interns toward understaffed lines
+            if self.line_coverage_needs.get(line_num, 0) > 0:
+                score += 25
+                reasons.append(f"Coverage need ({self.line_coverage_needs[line_num]} shortfall shifts)")
             
             line_scores.append((line_num, score, reasons, mentors_found))
         
