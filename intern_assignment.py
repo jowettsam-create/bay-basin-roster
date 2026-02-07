@@ -234,25 +234,30 @@ class InternAssignmentSystem:
     
     def record_intern_pairings(self, assignments: Dict[str, int], roster_period: str):
         """
-        Record mentor and intern pairings for rotation tracking
-        Tracks actual shift overlaps, not just same line assignments
-        
+        Record mentor and intern pairings for rotation tracking.
+
+        Rules:
+        - Same-line paramedic = mentor. Count shared working shifts.
+        - If no same-line mentor, record split pairings (shared shifts
+          from different lines).
+        - When a same-line mentor exists, skip incidental overlaps from
+          other lines.
+        - Clears previous entries for this roster period so re-runs are safe.
+
         Args:
             assignments: Dict mapping staff_name -> line_number
             roster_period: e.g. "Jan-Mar 2026"
         """
-        # Get schedules for everyone
+        # Build schedules (respecting leave) for everyone with an assignment
         schedules = {}
         for staff in self.staff_list:
             line = assignments.get(staff.name, self.current_roster.get(staff.name, 0))
             if line > 0:
                 line_obj = self.line_manager.lines[line - 1]
-                # Get schedule for roster period
                 schedule = []
                 current_date = self.roster_start
                 while current_date <= self.roster_end:
                     shift = line_obj.get_shift_type(current_date)
-                    # Check for leave
                     if staff.leave_periods:
                         for leave_start, leave_end, _ in staff.leave_periods:
                             if leave_start <= current_date <= leave_end:
@@ -261,44 +266,60 @@ class InternAssignmentSystem:
                     schedule.append((current_date, shift))
                     current_date += timedelta(days=1)
                 schedules[staff.name] = schedule
-        
-        # For each intern, find which paramedics they worked with
+
         for intern in self.interns:
+            intern_line = assignments.get(intern.name, 0)
             intern_schedule = schedules.get(intern.name, [])
             if not intern_schedule:
                 continue
-            
+
             history = self.request_histories.get(intern.name)
             if not history:
                 history = RequestHistory(staff_name=intern.name)
                 self.request_histories[intern.name] = history
-            
-            # Track which paramedics share actual shifts
-            paramedics_worked_with = set()
-            
+
+            # Clear previous entries for this period (safe to re-run)
+            history.clear_pairings_for_period(roster_period)
+
+            # Find same-line mentor(s)
+            same_line_mentors = []
             for para in self.paramedics:
-                para_schedule = schedules.get(para.name, [])
-                if not para_schedule:
-                    continue
-                
-                # Count how many shifts they share
-                shared_shifts = 0
-                for i, (date, intern_shift) in enumerate(intern_schedule):
-                    if intern_shift in ['D', 'N']:  # Working shift
-                        para_shift = para_schedule[i][1] if i < len(para_schedule) else 'O'
-                        if para_shift == intern_shift:  # Same shift type on same day
-                            shared_shifts += 1
-                
-                # If they worked together for at least 1 shift, record it
-                if shared_shifts > 0:
-                    paramedics_worked_with.add(para.name)
-                    # Record as mentor with shift count
-                    history.add_mentor_pairing(para.name, roster_period, shifts_together=shared_shifts)
-            
-            # Record other interns in same roster (not necessarily on same shifts)
+                para_line = assignments.get(para.name, self.current_roster.get(para.name, 0))
+                if para_line == intern_line and para_line > 0:
+                    para_schedule = schedules.get(para.name, [])
+                    shared = self._count_shared_shifts(intern_schedule, para_schedule)
+                    if shared > 0:
+                        same_line_mentors.append((para.name, shared))
+
+            if same_line_mentors:
+                # Record same-line mentor(s) only
+                for mentor_name, shifts in same_line_mentors:
+                    history.add_mentor_pairing(mentor_name, roster_period, shifts_together=shifts)
+            else:
+                # No same-line mentor — record split pairings (different line, shared shifts)
+                for para in self.paramedics:
+                    para_line = assignments.get(para.name, self.current_roster.get(para.name, 0))
+                    if para_line == intern_line or para_line == 0:
+                        continue
+                    para_schedule = schedules.get(para.name, [])
+                    shared = self._count_shared_shifts(intern_schedule, para_schedule)
+                    if shared > 0:
+                        history.add_mentor_pairing(para.name, roster_period, shifts_together=shared)
+
+            # Record other interns in same roster
             for other_intern in self.interns:
                 if other_intern.name != intern.name:
                     history.add_intern_pairing(other_intern.name, roster_period)
+
+    @staticmethod
+    def _count_shared_shifts(schedule_a, schedule_b) -> int:
+        """Count shifts where both schedules have the same working shift type (D or N)."""
+        shared = 0
+        for i, (date, shift_a) in enumerate(schedule_a):
+            if shift_a in ('D', 'N') and i < len(schedule_b):
+                if schedule_b[i][1] == shift_a:
+                    shared += 1
+        return shared
 
 
 def demo():

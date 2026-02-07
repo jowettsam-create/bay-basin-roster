@@ -254,16 +254,37 @@ class RequestHistory:
     def add_mentor_pairing(self, mentor_name: str, roster_period: str, shifts_together: int = 0):
         """Record that this intern worked with a specific mentor"""
         self.mentors_worked_with.append((mentor_name, roster_period, shifts_together))
-    
+
     def add_intern_pairing(self, intern_name: str, roster_period: str):
         """Record that this intern worked with another intern (on different lines)"""
         self.interns_worked_with.append((intern_name, roster_period))
-    
+
+    def clear_pairings_for_period(self, roster_period: str):
+        """Remove all mentor/intern pairings for a roster period (safe to re-run)"""
+        self.mentors_worked_with = [
+            (name, period, shifts) for name, period, shifts in self.mentors_worked_with
+            if period != roster_period
+        ]
+        self.interns_worked_with = [
+            (name, period) for name, period in self.interns_worked_with
+            if period != roster_period
+        ]
+
     def has_worked_with_mentor(self, mentor_name: str, within_rosters: int = 2) -> bool:
-        """Check if intern worked with this mentor recently"""
-        recent_pairings = self.mentors_worked_with[-within_rosters:] if len(self.mentors_worked_with) > within_rosters else self.mentors_worked_with
-        return any(name == mentor_name for name, _, _ in recent_pairings)
-    
+        """Check if intern worked with this mentor in the last N distinct roster periods"""
+        # Get the last N distinct roster periods
+        seen = []
+        for _, period, _ in reversed(self.mentors_worked_with):
+            if period not in seen:
+                seen.append(period)
+            if len(seen) >= within_rosters:
+                break
+        recent_periods = set(seen)
+        return any(
+            name == mentor_name and period in recent_periods
+            for name, period, _ in self.mentors_worked_with
+        )
+
     def has_worked_with_intern(self, intern_name: str, within_rosters: int = 1) -> bool:
         """Check if worked with this intern in recent rosters"""
         recent_pairings = self.interns_worked_with[-within_rosters:] if len(self.interns_worked_with) > within_rosters else self.interns_worked_with
@@ -276,14 +297,22 @@ class RequestHistory:
         """
         if not self.mentors_worked_with:
             return 100  # Never worked with anyone, all equally good
-        
-        # Check how recently they worked together
-        for i, (name, period, shifts) in enumerate(reversed(self.mentors_worked_with)):
+
+        # Build ordered list of distinct roster periods (most recent first)
+        seen_periods = []
+        for _, period, _ in reversed(self.mentors_worked_with):
+            if period not in seen_periods:
+                seen_periods.append(period)
+
+        # Find which roster period this mentor last appeared in
+        for name, period, _ in reversed(self.mentors_worked_with):
             if name == mentor_name:
-                rosters_ago = i + 1
-                # More rosters ago = higher score
+                try:
+                    rosters_ago = seen_periods.index(period) + 1
+                except ValueError:
+                    rosters_ago = len(seen_periods) + 1
                 return max(0, 100 - (rosters_ago * 25))
-        
+
         # Never worked together
         return 100
     
