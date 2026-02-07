@@ -1887,66 +1887,16 @@ def manager_roster_page():
                     if line:
                         roster.assign_staff_to_line(staff, line)
 
-                # ── Step 5: Record request outcomes in RequestHistory ──
-                for staff in rotating_staff:
-                    history = st.session_state.request_histories.get(staff.name)
-                    if not history:
-                        history = RequestHistory(staff_name=staff.name)
-                        st.session_state.request_histories[staff.name] = history
+                # ── Step 5: Store projected assignments (don't touch current_roster) ──
+                # Request outcomes and line history are recorded only when the
+                # roster is approved (uploaded via Roster History or manually set
+                # in Staff Management). This lets generation be re-run freely.
+                st.session_state.projected_assignments = dict(final_assignments)
+                st.session_state.projected_generation_log = list(generation_log)
+                st.session_state.projected_coverage_denials = coverage_denials
 
-                    assigned_line = final_assignments.get(staff.name, 0)
-                    if assigned_line == 0:
-                        continue
-
-                    # Find the most recent pending request for this roster period
-                    pending_idx = None
-                    for idx in range(len(history.request_log) - 1, -1, -1):
-                        req = history.request_log[idx]
-                        if req.status == 'pending':
-                            pending_idx = idx
-                            break
-
-                    if pending_idx is not None:
-                        req = history.request_log[pending_idx]
-                        got_what_they_wanted = False
-
-                        if req.request_type == 'line_change' and req.request_details.get('requested_line') == assigned_line:
-                            got_what_they_wanted = True
-                        elif req.request_type == 'stay_on_line' and req.request_details.get('stay_on_line') == assigned_line:
-                            got_what_they_wanted = True
-                        elif req.request_type == 'dates_off':
-                            # Approved if they got assigned a line (best effort)
-                            got_what_they_wanted = True
-
-                        if got_what_they_wanted:
-                            history.approve_request(pending_idx, {'assigned_line': assigned_line})
-                        else:
-                            # Check if this was a coverage denial by looking at the generation log
-                            was_coverage = any(
-                                staff.name in entry and 'coverage' in entry.lower()
-                                for entry in generation_log
-                            )
-                            reason = f"Assigned to Line {assigned_line} instead"
-                            if was_coverage:
-                                reason = f"Coverage constraint - staffing levels require you on Line {assigned_line}"
-                            elif req.request_type == 'line_change':
-                                reason = f"Line {req.request_details.get('requested_line')} conflict - assigned Line {assigned_line}"
-                            elif req.request_type == 'stay_on_line':
-                                reason = f"Could not stay on Line {req.request_details.get('stay_on_line')} - assigned Line {assigned_line}"
-                            history.deny_request(pending_idx, reason)
-
-                    # Update line assignment tracking
-                    history.update_line_assignment(assigned_line, roster_period, reason="request_approved")
-
-                # ── Step 6: Update current_roster in session state ──
-                # Save pre-generation roster for comparison display
-                st.session_state.pre_generation_roster = dict(st.session_state.current_roster)
-                for staff_name, line_num in final_assignments.items():
-                    st.session_state.current_roster[staff_name] = line_num
-
-                # Store in session and save
+                # Store the roster object for display/export (does NOT change current_roster)
                 st.session_state.roster = roster
-                auto_save()
 
                 # ── Step 7: Show generation summary ──
                 st.success(f"✅ Roster generated with priority-based assignment!")
@@ -1989,29 +1939,29 @@ def manager_roster_page():
         
         # Show comparison: Current vs Projected
         st.markdown("### 📊 Current vs Projected Line Assignments")
-        
-        # Use pre-generation roster for comparison if available, otherwise current
-        prev_roster = st.session_state.get('pre_generation_roster', st.session_state.current_roster)
+
+        projected = st.session_state.get('projected_assignments', {})
 
         comparison_data = []
         for staff in roster.staff:
             if not staff.is_fixed_roster and staff.assigned_line:
-                prev_line = prev_roster.get(staff.name, 0)
-                if isinstance(prev_line, int) and prev_line == 0:
+                cur_line = st.session_state.current_roster.get(staff.name, 0)
+                if isinstance(cur_line, int) and cur_line == 0:
                     current_line_str = "Not Set"
-                elif isinstance(prev_line, int):
-                    current_line_str = f"Line {prev_line}"
+                elif isinstance(cur_line, int):
+                    current_line_str = f"Line {cur_line}"
                 else:
-                    current_line_str = str(prev_line)
+                    current_line_str = str(cur_line)
 
-                projected_line = f"Line {staff.assigned_line}"
+                proj_line = projected.get(staff.name, staff.assigned_line)
+                projected_line = f"Line {proj_line}"
 
                 status = "✅ No Change" if current_line_str == projected_line else "🔄 Changed"
 
                 comparison_data.append({
                     'Staff': staff.name,
-                    'Previous Line': current_line_str,
-                    'Assigned Line': projected_line,
+                    'Current Line': current_line_str,
+                    'Projected Line': projected_line,
                     'Status': status
                 })
         
