@@ -1822,6 +1822,63 @@ def manager_roster_page():
                     all_assignments_for_pairings = dict(final_assignments)
                     intern_system.record_intern_pairings(all_assignments_for_pairings, roster_period)
 
+                # ── Step 3.5: Coverage repair after intern moves ──
+                # Intern rotation may have created shortfalls by moving interns off
+                # their old lines. Try swapping flexible paramedics to compensate.
+                post_intern_map = coverage_analyzer.build_coverage_map(working_assignments)
+                post_intern_shortfalls = coverage_analyzer.count_shortfalls(post_intern_map)
+
+                if post_intern_shortfalls > 0:
+                    # Identify flexible paramedics: non-intern, no specific request,
+                    # just stayed on their current line ("no change" in log)
+                    flexible_staff = []
+                    for staff in non_intern_rotating:
+                        if staff.name in conflict_handled:
+                            continue
+                        if staff.requested_line or staff.requested_dates_off:
+                            continue
+                        current_line = st.session_state.current_roster.get(staff.name, 0)
+                        assigned = final_assignments.get(staff.name, 0)
+                        if current_line > 0 and assigned == current_line:
+                            flexible_staff.append(staff)
+
+                    # Try moving each flexible paramedic to a line that needs coverage
+                    # Keep going until no improvement is possible
+                    improved = True
+                    while improved and post_intern_shortfalls > 0:
+                        improved = False
+                        best_swap = None
+                        best_improvement = 0
+
+                        for staff in flexible_staff:
+                            from_line = working_assignments.get(staff.name, 0)
+                            if from_line == 0:
+                                continue
+
+                            # Try every other line
+                            for to_line in range(1, 10):
+                                if to_line == from_line:
+                                    continue
+                                result = coverage_analyzer.evaluate_move(
+                                    working_assignments, staff.name, from_line, to_line
+                                )
+                                # Only accept moves that strictly reduce shortfalls
+                                if result['delta'] < best_improvement:
+                                    best_improvement = result['delta']
+                                    best_swap = (staff, from_line, to_line, result['after'])
+
+                        if best_swap:
+                            staff, from_line, to_line, new_shortfalls = best_swap
+                            working_assignments[staff.name] = to_line
+                            final_assignments[staff.name] = to_line
+                            generation_log.append(
+                                f"Line {to_line}: {staff.name} (moved from Line {from_line} for coverage)"
+                            )
+                            post_intern_shortfalls = new_shortfalls
+                            # Remove from flexible list so we don't move them again
+                            flexible_staff = [s for s in flexible_staff if s.name != staff.name]
+                            improved = True
+
                 # ── Step 4: Apply assignments to the RosterAssignment object ──
                 for staff in roster.staff:
                     if staff.is_fixed_roster:
