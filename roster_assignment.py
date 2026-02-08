@@ -65,26 +65,32 @@ class CoverageIssue:
     shortfall: int
     
     def __repr__(self):
-        return (f"{self.date.strftime('%a %d/%m/%Y')} {self.shift_type}-shift: "
-                f"Need {self.required}, Have {self.assigned} (Short {self.shortfall})")
+        if self.assigned < self.required:
+            return (f"{self.date.strftime('%a %d/%m/%Y')} {self.shift_type}-shift: "
+                    f"Need {self.required}, Have {self.assigned} (Short {self.shortfall})")
+        else:
+            return (f"{self.date.strftime('%a %d/%m/%Y')} {self.shift_type}-shift: "
+                    f"Max {self.required}, Have {self.assigned} (Over by {self.shortfall})")
 
 
 class RosterAssignment:
     """Manages staff assignments and coverage checking"""
     
     def __init__(self, roster_start_date: datetime, roster_end_date: datetime,
-                 min_paramedics_per_shift: int = 2):
+                 min_paramedics_per_shift: int = 2, max_paramedics_per_shift: int = 4):
         """
         Initialize the roster assignment system
-        
+
         Args:
             roster_start_date: Start date of roster period
             roster_end_date: End date of roster period
             min_paramedics_per_shift: Minimum paramedics required per shift
+            max_paramedics_per_shift: Maximum paramedics per shift
         """
         self.roster_start_date = roster_start_date
         self.roster_end_date = roster_end_date
         self.min_paramedics_per_shift = min_paramedics_per_shift
+        self.max_paramedics_per_shift = max_paramedics_per_shift
         
         self.line_manager = RosterLineManager(roster_start_date)
         self.staff: List[StaffMember] = []
@@ -268,7 +274,15 @@ class RosterAssignment:
                     assigned=coverage['D'],
                     shortfall=self.min_paramedics_per_shift - coverage['D']
                 ))
-            
+            elif coverage['D'] > self.max_paramedics_per_shift:
+                issues.append(CoverageIssue(
+                    date=current_date,
+                    shift_type='DAY',
+                    required=self.max_paramedics_per_shift,
+                    assigned=coverage['D'],
+                    shortfall=coverage['D'] - self.max_paramedics_per_shift
+                ))
+
             # Check night shift
             if coverage['N'] < self.min_paramedics_per_shift:
                 issues.append(CoverageIssue(
@@ -277,6 +291,14 @@ class RosterAssignment:
                     required=self.min_paramedics_per_shift,
                     assigned=coverage['N'],
                     shortfall=self.min_paramedics_per_shift - coverage['N']
+                ))
+            elif coverage['N'] > self.max_paramedics_per_shift:
+                issues.append(CoverageIssue(
+                    date=current_date,
+                    shift_type='NIGHT',
+                    required=self.max_paramedics_per_shift,
+                    assigned=coverage['N'],
+                    shortfall=coverage['N'] - self.max_paramedics_per_shift
                 ))
             
             current_date += timedelta(days=1)
@@ -398,12 +420,14 @@ class CoverageAnalyzer:
     """Evaluates shift coverage for hypothetical line assignments without mutating state."""
 
     def __init__(self, staff_list: List[StaffMember], line_manager,
-                 roster_start: datetime, roster_end: datetime, min_coverage: int = 2):
+                 roster_start: datetime, roster_end: datetime,
+                 min_coverage: int = 2, max_coverage: int = 4):
         self.staff_list = staff_list
         self.line_manager = line_manager
         self.roster_start = roster_start
         self.roster_end = roster_end
         self.min_coverage = min_coverage
+        self.max_coverage = max_coverage
         # Pre-compute date range once
         self._dates = []
         d = roster_start
@@ -437,13 +461,15 @@ class CoverageAnalyzer:
         return coverage
 
     def count_shortfalls(self, coverage_map: Dict[datetime, Dict[str, int]]) -> int:
-        """Total shifts below minimum across all dates."""
+        """Total shifts outside min/max range across all dates."""
         total = 0
         for d in self._dates:
             for shift_type in ('D', 'N'):
                 count = coverage_map[d][shift_type]
                 if count < self.min_coverage:
                     total += self.min_coverage - count
+                elif count > self.max_coverage:
+                    total += count - self.max_coverage
         return total
 
     def evaluate_move(self, assignments: Dict[str, int], staff_name: str,

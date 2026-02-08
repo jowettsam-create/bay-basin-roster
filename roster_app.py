@@ -1226,13 +1226,22 @@ def manager_roster_page():
         with col2:
             st.text_input("Current Roster End", value=st.session_state.roster_end.strftime('%d %b %Y'), disabled=True)
 
-    # Minimum coverage setting
-    min_coverage = st.number_input(
-        "Minimum Paramedics per Shift",
-        min_value=1,
-        max_value=10,
-        value=2
-    )
+    # Coverage settings
+    cov_col1, cov_col2 = st.columns(2)
+    with cov_col1:
+        min_coverage = st.number_input(
+            "Minimum Paramedics per Shift",
+            min_value=1,
+            max_value=10,
+            value=2
+        )
+    with cov_col2:
+        max_coverage = st.number_input(
+            "Maximum Paramedics per Shift",
+            min_value=1,
+            max_value=10,
+            value=4
+        )
     
     # ══════════════════════════════════════════════════════════════════════════
     # LAYER 1: HARD RULES (Must never be violated)
@@ -1625,7 +1634,8 @@ def manager_roster_page():
                 roster = RosterAssignment(
                     st.session_state.projected_roster_start,
                     st.session_state.projected_roster_end,
-                    min_paramedics_per_shift=min_coverage
+                    min_paramedics_per_shift=min_coverage,
+                    max_paramedics_per_shift=max_coverage
                 )
 
                 # Add all staff
@@ -1660,7 +1670,8 @@ def manager_roster_page():
                     line_manager=cov_line_manager,
                     roster_start=st.session_state.projected_roster_start,
                     roster_end=st.session_state.projected_roster_end,
-                    min_coverage=min_coverage
+                    min_coverage=min_coverage,
+                    max_coverage=max_coverage
                 )
                 # Working assignments built up incrementally
                 working_assignments = dict(baseline_assignments)
@@ -1928,9 +1939,9 @@ def manager_roster_page():
                 final_cov_map = coverage_analyzer.build_coverage_map(final_assignments)
                 final_shortfalls = coverage_analyzer.count_shortfalls(final_cov_map)
                 if final_shortfalls > 0:
-                    st.warning(f"⚠️ {final_shortfalls} shift shortfall(s) remain (understaffed periods may be unavoidable)")
+                    st.warning(f"⚠️ {final_shortfalls} coverage issue(s) remain (under/overstaffed periods may be unavoidable)")
                 else:
-                    st.success(f"All shifts meet minimum coverage of {min_coverage}")
+                    st.success(f"All shifts within coverage range ({min_coverage}-{max_coverage} per shift)")
 
                 with st.expander("Generation Log"):
                     for entry in generation_log:
