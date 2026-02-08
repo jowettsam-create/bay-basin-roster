@@ -1063,7 +1063,7 @@ def staff_request_page():
         if 'selected_request_line' not in st.session_state:
             st.session_state.selected_request_line = None
 
-        # Display clickable line cards
+        # Display clickable line buttons
         st.markdown("**Select a Roster Line:**")
 
         valid_lines = [ln for ln, info in line_validation_info.items() if info["valid"]]
@@ -1078,50 +1078,35 @@ def staff_request_page():
                     is_selected = (st.session_state.selected_request_line == line_num)
 
                     if validation["valid"]:
+                        # Build button label with reason
                         if is_selected:
-                            bg_color = "#1a73e8"
-                            border_color = "#1557b0"
-                            text_color = "#ffffff"
-                            indicator = "✅"
+                            label = f"✅ Line {line_num} — Selected"
+                        elif validation["reason"]:
+                            label = f"🟢 Line {line_num} — {validation['reason']}"
                         else:
-                            bg_color = "#d4edda"
-                            border_color = "#28a745"
-                            text_color = "#155724"
-                            indicator = "🟢"
-                    else:
-                        bg_color = "#f8d7da"
-                        border_color = "#dc3545"
-                        text_color = "#721c24"
-                        indicator = "🔴"
+                            label = f"🟢 Line {line_num}"
 
-                    reason_text = validation['reason'] if validation['reason'] else ""
-                    if is_selected:
-                        reason_text = "Selected"
-
-                    st.markdown(
-                        f"<div style='background-color: {bg_color}; padding: 10px; border-radius: 5px; "
-                        f"margin-bottom: 8px; border: 2px solid {border_color}; color: {text_color};'>"
-                        f"{indicator} <b>Line {line_num}</b><br>"
-                        f"<small style='color: {text_color};'>{reason_text}</small>"
-                        f"</div>",
-                        unsafe_allow_html=True
-                    )
-
-                    if validation["valid"]:
                         if st.button(
-                            f"Select Line {line_num}" if not is_selected else f"Line {line_num} Selected",
+                            label,
                             key=f"select_line_{line_num}",
                             use_container_width=True,
                             type="primary" if is_selected else "secondary"
                         ):
                             st.session_state.selected_request_line = line_num
                             st.rerun()
+                    else:
+                        # Unavailable — disabled button with reason
+                        reason = validation['reason'] if validation['reason'] else "Unavailable"
+                        st.button(
+                            f"🔴 Line {line_num} — {reason}",
+                            key=f"select_line_{line_num}",
+                            use_container_width=True,
+                            disabled=True
+                        )
 
             requested_line = st.session_state.selected_request_line
 
-            if requested_line and requested_line in valid_lines:
-                st.success(f"Line {requested_line} selected")
-            elif requested_line and requested_line not in valid_lines:
+            if requested_line and requested_line not in valid_lines:
                 st.session_state.selected_request_line = None
                 requested_line = None
 
