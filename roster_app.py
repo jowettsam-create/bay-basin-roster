@@ -2188,15 +2188,19 @@ def roster_history_page():
             # Create columns for better layout
             col1, col2 = st.columns(2)
 
+            # Pre-fill from projected_assignments (generated roster) if available
+            projected = st.session_state.get('projected_assignments', {})
+
             for i, staff in enumerate(sorted(rotating_staff, key=lambda s: s.name)):
-                # Get current/draft assignment as default
-                current_line = st.session_state.current_roster.get(staff.name, 0)
+                # Default to projected assignment, then current roster
+                default_line = projected.get(staff.name,
+                               st.session_state.current_roster.get(staff.name, 0))
 
                 with col1 if i % 2 == 0 else col2:
                     line = st.selectbox(
                         f"{staff.name}",
                         options=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-                        index=current_line,
+                        index=default_line,
                         format_func=lambda x: "Unassigned" if x == 0 else f"Line {x}",
                         key=f"approved_line_{staff.name}"
                     )
@@ -2271,10 +2275,28 @@ def roster_history_page():
                     st.session_state.roster_history
                 )
 
+                # Apply approved assignments to current_roster
+                for staff_name, assigned_line in approved_assignments.items():
+                    if assigned_line > 0:
+                        st.session_state.current_roster[staff_name] = assigned_line
+
+                # Clear staff request fields (requests are now resolved)
+                for staff in st.session_state.staff_list:
+                    if not staff.is_fixed_roster:
+                        staff.requested_line = None
+                        staff.requested_dates_off = []
+
+                # Clear projected generation state
+                st.session_state.pop('projected_assignments', None)
+                st.session_state.pop('projected_generation_log', None)
+                st.session_state.pop('projected_coverage_denials', None)
+                st.session_state.roster = None
+
                 # Save everything
                 data_storage.save_roster_history(st.session_state.roster_history)
                 hist_dict = {name: h.to_dict() for name, h in st.session_state.request_histories.items()}
                 data_storage.save_request_history(hist_dict)
+                auto_save()
 
                 st.rerun()
         else:
@@ -2437,8 +2459,16 @@ def roster_history_page():
                 if line_num > 0:
                     st.session_state.current_roster[staff_name] = line_num
 
-        # 5. Clear any pending requests (they were for the now-current period)
-        # Staff will need to submit new requests for the new projected period
+        # 5. Clear staff request fields and projected generation state
+        for staff in st.session_state.staff_list:
+            if not staff.is_fixed_roster:
+                staff.requested_line = None
+                staff.requested_dates_off = []
+
+        st.session_state.pop('projected_assignments', None)
+        st.session_state.pop('projected_generation_log', None)
+        st.session_state.pop('projected_coverage_denials', None)
+        st.session_state.roster = None
 
         # 6. Save everything (auto_save handles staff, roster, settings, and request histories)
         auto_save()
