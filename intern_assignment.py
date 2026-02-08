@@ -277,6 +277,9 @@ class InternAssignmentSystem:
             if not history:
                 history = RequestHistory(staff_name=intern.name)
                 self.request_histories[intern.name] = history
+            elif isinstance(history, dict):
+                history = RequestHistory.from_dict(history)
+                self.request_histories[intern.name] = history
 
             # Clear previous entries for this period (safe to re-run)
             history.clear_pairings_for_period(roster_period)
