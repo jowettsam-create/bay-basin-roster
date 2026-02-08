@@ -986,137 +986,153 @@ def staff_request_page():
         key="request_type_selector"
     )
     
-    # Now the form with the actual inputs
-    with st.form("staff_request_form"):
-        
-        requested_line = None
-        requested_dates = []
-        
-        if request_type == "Specific Roster Line":
-            # Check line validity based on constraints
-            current_line = st.session_state.current_roster.get(selected_name, 0)
-            
-            # Get validation info for each line
-            line_validation_info = {}
-            
-            if current_line > 0:
-                # Import boundary validator
-                try:
-                    from roster_boundary_validator import RosterBoundaryValidator
-                    validator = RosterBoundaryValidator()
-                    manager = RosterLineManager(st.session_state.roster_start)
-                    current_line_obj = manager.lines[current_line - 1]
-                    
-                    for new_line_num in range(1, 10):
-                        if new_line_num == current_line:
-                            line_validation_info[new_line_num] = {"valid": True, "reason": "Current line"}
-                        else:
-                            new_line_obj = manager.lines[new_line_num - 1]
-                            is_valid, message = validator.validate_line_transition(
-                                current_line_obj,
-                                new_line_obj,
-                                st.session_state.roster_start
-                            )
-                            line_validation_info[new_line_num] = {"valid": is_valid, "reason": message}
-                except ImportError:
-                    # If validator not available, allow all lines
-                    for line_num in range(1, 10):
-                        line_validation_info[line_num] = {"valid": True, "reason": ""}
-            else:
-                # No current line, all lines are valid
+    # Line selection (outside form so buttons work)
+    requested_line = None
+    requested_dates = []
+
+    if request_type == "Specific Roster Line":
+        # Check line validity based on constraints
+        current_line = st.session_state.current_roster.get(selected_name, 0)
+
+        # Get validation info for each line
+        line_validation_info = {}
+
+        if current_line > 0:
+            try:
+                from roster_boundary_validator import RosterBoundaryValidator
+                validator = RosterBoundaryValidator()
+                manager = RosterLineManager(st.session_state.roster_start)
+                current_line_obj = manager.lines[current_line - 1]
+
+                for new_line_num in range(1, 10):
+                    if new_line_num == current_line:
+                        line_validation_info[new_line_num] = {"valid": True, "reason": "Current line"}
+                    else:
+                        new_line_obj = manager.lines[new_line_num - 1]
+                        is_valid, message = validator.validate_line_transition(
+                            current_line_obj,
+                            new_line_obj,
+                            st.session_state.roster_start
+                        )
+                        line_validation_info[new_line_num] = {"valid": is_valid, "reason": message}
+            except ImportError:
                 for line_num in range(1, 10):
                     line_validation_info[line_num] = {"valid": True, "reason": ""}
-            
-            # Check for intern-to-intern conflicts
-            if selected_staff.role == "Intern":
-                # Check how many interns are on each line
-                intern_count_by_line = {i: 0 for i in range(1, 10)}
-                for other_staff in st.session_state.staff_list:
-                    if other_staff.role == "Intern" and other_staff.name != selected_name:
-                        other_current_line = st.session_state.current_roster.get(other_staff.name, 0)
-                        if other_current_line > 0:
-                            intern_count_by_line[other_current_line] += 1
-                
-                # Mark lines with interns as invalid
-                for line_num, intern_count in intern_count_by_line.items():
-                    if intern_count > 0 and line_validation_info[line_num]["valid"]:
-                        line_validation_info[line_num] = {
-                            "valid": False,
-                            "reason": f"Another intern is already on this line"
-                        }
-            
-            # Check for night shift on Friday before Saturday leave
-            if temp_leave_periods:
-                manager = RosterLineManager(st.session_state.roster_start)
-                
-                for leave_start, leave_end, leave_type in temp_leave_periods:
-                    # Check if leave starts on a Saturday
-                    if leave_start.weekday() == 5:  # Saturday = 5
-                        friday_before = leave_start - timedelta(days=1)
-                        
-                        # Check each line to see if it has a night shift on that Friday
-                        for line_num in range(1, 10):
-                            if not line_validation_info[line_num]["valid"]:
-                                continue  # Already marked invalid
-                            
-                            line = manager.lines[line_num - 1]
-                            shift_on_friday = line.get_shift_type(friday_before)
-                            
-                            if shift_on_friday == 'N':
-                                line_validation_info[line_num] = {
-                                    "valid": False,
-                                    "reason": f"Night shift on {friday_before.strftime('%d/%m')} before leave starts"
-                                }
+        else:
+            for line_num in range(1, 10):
+                line_validation_info[line_num] = {"valid": True, "reason": ""}
 
-            
-            # Display line options with visual indicators
-            st.markdown("**Available Roster Lines:**")
-            st.info("🟢 = Available  |  🔴 = Not available due to constraints")
-            
-            # Create a grid of line options
+        # Check for intern-to-intern conflicts
+        if selected_staff.role == "Intern":
+            intern_count_by_line = {i: 0 for i in range(1, 10)}
+            for other_staff in st.session_state.staff_list:
+                if other_staff.role == "Intern" and other_staff.name != selected_name:
+                    other_current_line = st.session_state.current_roster.get(other_staff.name, 0)
+                    if other_current_line > 0:
+                        intern_count_by_line[other_current_line] += 1
+
+            for line_num, intern_count in intern_count_by_line.items():
+                if intern_count > 0 and line_validation_info[line_num]["valid"]:
+                    line_validation_info[line_num] = {
+                        "valid": False,
+                        "reason": f"Another intern is already on this line"
+                    }
+
+        # Check for night shift on Friday before Saturday leave
+        if temp_leave_periods:
+            manager = RosterLineManager(st.session_state.roster_start)
+
+            for leave_start, leave_end, leave_type in temp_leave_periods:
+                if leave_start.weekday() == 5:
+                    friday_before = leave_start - timedelta(days=1)
+
+                    for line_num in range(1, 10):
+                        if not line_validation_info[line_num]["valid"]:
+                            continue
+
+                        line = manager.lines[line_num - 1]
+                        shift_on_friday = line.get_shift_type(friday_before)
+
+                        if shift_on_friday == 'N':
+                            line_validation_info[line_num] = {
+                                "valid": False,
+                                "reason": f"Night shift on {friday_before.strftime('%d/%m')} before leave starts"
+                            }
+
+        # Initialize selected line in session state
+        if 'selected_request_line' not in st.session_state:
+            st.session_state.selected_request_line = None
+
+        # Display clickable line cards
+        st.markdown("**Select a Roster Line:**")
+
+        valid_lines = [ln for ln, info in line_validation_info.items() if info["valid"]]
+
+        if not valid_lines:
+            st.error("No lines are available. This may be due to Award constraints or intern pairing rules.")
+        else:
             cols = st.columns(3)
             for i, line_num in enumerate(range(1, 10)):
                 with cols[i % 3]:
                     validation = line_validation_info[line_num]
+                    is_selected = (st.session_state.selected_request_line == line_num)
+
                     if validation["valid"]:
-                        indicator = "🟢"
-                        bg_color = "#d4edda"
-                        border_color = "#28a745"
-                        text_color = "#155724"
+                        if is_selected:
+                            bg_color = "#1a73e8"
+                            border_color = "#1557b0"
+                            text_color = "#ffffff"
+                            indicator = "✅"
+                        else:
+                            bg_color = "#d4edda"
+                            border_color = "#28a745"
+                            text_color = "#155724"
+                            indicator = "🟢"
                     else:
-                        indicator = "🔴"
                         bg_color = "#f8d7da"
                         border_color = "#dc3545"
                         text_color = "#721c24"
-                    
+                        indicator = "🔴"
+
+                    reason_text = validation['reason'] if validation['reason'] else ""
+                    if is_selected:
+                        reason_text = "Selected"
+
                     st.markdown(
-                        f"<div style='background-color: {bg_color}; padding: 10px; border-radius: 5px; margin: 5px; border: 2px solid {border_color}; color: {text_color};'>"
+                        f"<div style='background-color: {bg_color}; padding: 10px; border-radius: 5px; "
+                        f"margin-bottom: 8px; border: 2px solid {border_color}; color: {text_color};'>"
                         f"{indicator} <b>Line {line_num}</b><br>"
-                        f"<small style='color: {text_color};'>{validation['reason']}</small>"
+                        f"<small style='color: {text_color};'>{reason_text}</small>"
                         f"</div>",
                         unsafe_allow_html=True
                     )
-            
-            st.markdown("---")
-            
-            # Filter only valid lines for the selectbox
-            valid_lines = [line_num for line_num, info in line_validation_info.items() if info["valid"]]
-            
-            if not valid_lines:
-                st.error("❌ No lines are available for you to move to. This may be due to Award constraints or intern pairing rules.")
+
+                    if validation["valid"]:
+                        if st.button(
+                            f"Select Line {line_num}" if not is_selected else f"Line {line_num} Selected",
+                            key=f"select_line_{line_num}",
+                            use_container_width=True,
+                            type="primary" if is_selected else "secondary"
+                        ):
+                            st.session_state.selected_request_line = line_num
+                            st.rerun()
+
+            requested_line = st.session_state.selected_request_line
+
+            if requested_line and requested_line in valid_lines:
+                st.success(f"Line {requested_line} selected")
+            elif requested_line and requested_line not in valid_lines:
+                st.session_state.selected_request_line = None
                 requested_line = None
-            else:
-                requested_line = st.selectbox(
-                    "Select Roster Line",
-                    options=valid_lines,
-                    help="Only lines that comply with Award requirements and pairing rules are shown"
-                )
-            
-        elif request_type == "Specific Days Off":
+
+    # Form for submit button (and date inputs for days-off requests)
+    with st.form("staff_request_form"):
+
+        if request_type == "Specific Days Off":
             st.info("Select the dates you need off. The system will find which roster lines give you those days.")
-            
+
             num_dates = st.number_input("How many dates do you need off?", min_value=1, max_value=10, value=2)
-            
+
             cols = st.columns(min(num_dates, 3))
             for i in range(num_dates):
                 with cols[i % 3]:
@@ -1126,10 +1142,19 @@ def staff_request_page():
                         key=f"date_{i}"
                     )
                     requested_dates.append(datetime.combine(date, datetime.min.time()))
-        
-        submitted = st.form_submit_button("Submit Request", type="primary", width="stretch")
-        
+
+        submitted = st.form_submit_button("Submit Request", type="primary", use_container_width=True)
+
         if submitted:
+            # Validate line selection
+            if request_type == "Specific Roster Line" and not requested_line:
+                st.error("Please select a line above before submitting.")
+                st.stop()
+
+            # Clear the line selection from session state after submit
+            if request_type == "Specific Roster Line":
+                st.session_state.pop('selected_request_line', None)
+
             # Update the existing staff member's request
             selected_staff.requested_line = requested_line if request_type == "Specific Roster Line" else None
             selected_staff.requested_dates_off = requested_dates if request_type == "Specific Days Off" else []
