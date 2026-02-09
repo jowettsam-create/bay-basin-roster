@@ -1479,8 +1479,8 @@ def manager_roster_page():
     
     if st.session_state.staff_list:
         # Separate fixed and rotating roster staff
-        fixed_staff = [s for s in st.session_state.staff_list if s.is_fixed_roster]
-        rotating_staff = [s for s in st.session_state.staff_list if not s.is_fixed_roster]
+        fixed_staff = sorted([s for s in st.session_state.staff_list if s.is_fixed_roster], key=lambda s: s.name)
+        rotating_staff = sorted([s for s in st.session_state.staff_list if not s.is_fixed_roster], key=lambda s: s.name)
         
         if fixed_staff:
             st.markdown("#### 📌 Fixed Roster Staff")
