@@ -2636,7 +2636,7 @@ def main():
     
     page = st.sidebar.radio(
         "Navigation",
-        ["👥 Staff Management", "📅 Current Roster", "🔔 Staff Request", "👔 Manager: Create Roster", "📜 Roster History", "📊 Request History", "🔍 Line Explorer"]
+        ["🔔 Staff Request", "🔍 Line Explorer", "📅 Current Roster", "📜 Roster History", "📊 Request History", "👔 Manager: Create Roster", "👥 Staff Management"]
     )
     
     st.sidebar.markdown("---")
