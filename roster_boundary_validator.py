@@ -20,30 +20,40 @@ class RosterBoundaryValidator:
         line_2: RosterLine,
         transition_date: datetime,
         lookback_days: int = 4,
-        lookahead_days: int = 4
+        lookahead_days: int = 4,
+        leave_periods: List[Tuple[datetime, datetime]] = None
     ) -> Tuple[bool, Optional[str]]:
         """
         Validates that transitioning from line_1 to line_2 complies with Award
-        
+
         Args:
             line_1: Current roster line
             line_2: New roster line
             transition_date: Date when the roster period changes
             lookback_days: Days to check before transition
             lookahead_days: Days to check after transition
-            
+            leave_periods: List of (start, end) tuples — days on leave count as off
+
         Returns:
             (is_valid, violation_message)
         """
         # Get schedules around the boundary
         period_1_start = transition_date - timedelta(days=lookback_days)
         period_1_schedule = line_1.get_schedule(period_1_start, lookback_days)
-        
+
         period_2_schedule = line_2.get_schedule(transition_date, lookahead_days)
-        
+
         # Combine for boundary analysis
         boundary_schedule = period_1_schedule + period_2_schedule
-        
+
+        # Override shifts to 'O' for any dates covered by leave
+        if leave_periods:
+            boundary_schedule = [
+                (date, 'O') if any(start <= date <= end for start, end in leave_periods)
+                else (date, shift)
+                for date, shift in boundary_schedule
+            ]
+
         # Extract just the shift types
         shifts = [shift for date, shift in boundary_schedule]
         
@@ -88,19 +98,21 @@ class RosterBoundaryValidator:
     def find_valid_line_transitions(
         current_line: RosterLine,
         all_lines: List[RosterLine],
-        transition_date: datetime
+        transition_date: datetime,
+        leave_periods: List[Tuple[datetime, datetime]] = None
     ) -> List[Tuple[RosterLine, bool, Optional[str]]]:
         """
         Check all possible line transitions from current line
-        
+
         Returns:
             List of (line, is_valid, violation_message) tuples
         """
         results = []
-        
+
         for new_line in all_lines:
             is_valid, message = RosterBoundaryValidator.validate_line_transition(
-                current_line, new_line, transition_date
+                current_line, new_line, transition_date,
+                leave_periods=leave_periods
             )
             results.append((new_line, is_valid, message))
         
