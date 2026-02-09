@@ -1036,14 +1036,19 @@ def staff_request_page():
         # Get validation info for each line
         line_validation_info = {}
 
+        proj_start = st.session_state.projected_roster_start
+        proj_end = st.session_state.projected_roster_end
+
+        # Only consider leave that overlaps with the projected roster period
+        projected_leave = [(s, e) for s, e, _ in selected_staff.leave_periods
+                           if e >= proj_start and s <= proj_end]
+
         if current_line > 0:
             try:
                 from roster_boundary_validator import RosterBoundaryValidator
                 validator = RosterBoundaryValidator()
-                manager = RosterLineManager(st.session_state.roster_start)
+                manager = RosterLineManager(proj_start)
                 current_line_obj = manager.lines[current_line - 1]
-
-                all_leave = [(s, e) for s, e, _ in selected_staff.leave_periods]
 
                 for new_line_num in range(1, 10):
                     if new_line_num == current_line:
@@ -1053,8 +1058,8 @@ def staff_request_page():
                         is_valid, message = validator.validate_line_transition(
                             current_line_obj,
                             new_line_obj,
-                            st.session_state.roster_start,
-                            leave_periods=all_leave if all_leave else None
+                            proj_start,
+                            leave_periods=projected_leave if projected_leave else None
                         )
                         line_validation_info[new_line_num] = {"valid": is_valid, "reason": message}
             except ImportError:
@@ -1080,11 +1085,11 @@ def staff_request_page():
                         "reason": f"Another intern is already on this line"
                     }
 
-        # Check for night shift on Friday before Saturday leave
-        if selected_staff.leave_periods:
-            manager = RosterLineManager(st.session_state.roster_start)
+        # Check for night shift on Friday before Saturday leave (projected period only)
+        if projected_leave:
+            manager = RosterLineManager(proj_start)
 
-            for leave_start, leave_end, leave_type in selected_staff.leave_periods:
+            for leave_start, leave_end in projected_leave:
                 if leave_start.weekday() == 5:
                     friday_before = leave_start - timedelta(days=1)
 
