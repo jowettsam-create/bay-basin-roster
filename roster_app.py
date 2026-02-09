@@ -2635,7 +2635,7 @@ def request_history_page():
         st.markdown("<h2 class='section-header'>Mentor Rotation History</h2>", unsafe_allow_html=True)
         
         st.write("**Mentors Worked With:**")
-        for i, (mentor, period) in enumerate(reversed(history.mentors_worked_with[-5:]), 1):
+        for i, (mentor, period, shifts) in enumerate(reversed(history.mentors_worked_with[-5:]), 1):
             if i == 1:
                 st.write(f"{i}. {mentor} ({period}) - {shifts} shifts ← Current")
             else:
