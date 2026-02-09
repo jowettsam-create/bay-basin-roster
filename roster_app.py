@@ -114,6 +114,110 @@ def rebuild_line_histories_from_roster_history(request_histories: Dict[str, Requ
 
     return request_histories
 
+
+def rebuild_mentor_histories_from_roster_history(request_histories: Dict[str, RequestHistory],
+                                                  roster_history: List[dict],
+                                                  staff_list: List[StaffMember]) -> Dict[str, RequestHistory]:
+    """
+    Rebuild mentors_worked_with for interns based on historical roster data.
+    For each past roster period, finds which paramedics were on the same line
+    as each intern and counts shared working shifts.
+
+    Args:
+        request_histories: Current request histories dict
+        roster_history: List of approved roster entries from storage
+        staff_list: Current staff list (used to identify interns vs paramedics)
+
+    Returns:
+        Updated request_histories dict with populated mentor histories
+    """
+    if not roster_history or not staff_list:
+        return request_histories
+
+    # Build role lookup from current staff list
+    staff_roles = {s.name: s.role for s in staff_list}
+    intern_names = {s.name for s in staff_list if s.role == "Intern"}
+
+    if not intern_names:
+        return request_histories
+
+    # Sort roster history by start date (oldest first)
+    sorted_history = sorted(
+        roster_history,
+        key=lambda x: x.get('start_date', '9999-99-99')
+    )
+
+    # Clear all intern mentor histories — roster history is source of truth
+    for intern_name in intern_names:
+        if intern_name in request_histories:
+            request_histories[intern_name].mentors_worked_with = []
+
+    for entry in sorted_history:
+        period = entry.get('period', '')
+        start_date_str = entry.get('start_date', '')
+        end_date_str = entry.get('end_date', '')
+        assignments = entry.get('assignments', {})
+
+        if not start_date_str or not end_date_str:
+            continue
+
+        try:
+            roster_start = datetime.fromisoformat(start_date_str)
+            roster_end = datetime.fromisoformat(end_date_str)
+        except (ValueError, TypeError):
+            continue
+
+        # Build line schedules for this period
+        line_manager = RosterLineManager(roster_start)
+        num_days = (roster_end - roster_start).days + 1
+
+        # Pre-compute schedules per line
+        line_schedules = {}
+        for line_num in range(1, 10):
+            line_obj = line_manager.lines[line_num - 1]
+            schedule = []
+            for i in range(num_days):
+                date = roster_start + timedelta(days=i)
+                schedule.append((date, line_obj.get_shift_type(date)))
+            line_schedules[line_num] = schedule
+
+        # For each intern in this roster period
+        for intern_name in intern_names:
+            if intern_name not in assignments:
+                continue
+            intern_line = assignments[intern_name]
+            if intern_line == 0:
+                continue
+
+            # Get or create history
+            if intern_name not in request_histories:
+                request_histories[intern_name] = RequestHistory(staff_name=intern_name)
+            history = request_histories[intern_name]
+
+            intern_schedule = line_schedules.get(intern_line, [])
+
+            # Find same-line paramedics
+            for staff_name, staff_line in assignments.items():
+                if staff_name == intern_name or staff_line != intern_line:
+                    continue
+                # Only count paramedics (not other interns)
+                role = staff_roles.get(staff_name, '')
+                if role == 'Intern':
+                    continue
+
+                para_schedule = line_schedules.get(staff_line, [])
+                # Count shared working shifts
+                shared = 0
+                for i, (date, shift_a) in enumerate(intern_schedule):
+                    if shift_a in ('D', 'N') and i < len(para_schedule):
+                        if para_schedule[i][1] == shift_a:
+                            shared += 1
+                if shared > 0:
+                    history.add_mentor_pairing(staff_name, period, shifts_together=shared)
+
+    return request_histories
+
+
 # Page config
 st.set_page_config(
     page_title="Bay & Basin Roster System",
@@ -239,6 +343,13 @@ if 'initialized' not in st.session_state:
         st.session_state.roster_history
     )
 
+    # Rebuild intern mentor histories from roster history
+    st.session_state.request_histories = rebuild_mentor_histories_from_roster_history(
+        st.session_state.request_histories,
+        st.session_state.roster_history,
+        st.session_state.staff_list
+    )
+
     st.session_state.roster = None
 
 # Ensure all required keys exist
@@ -263,6 +374,11 @@ if 'roster_history' not in st.session_state:
         st.session_state.request_histories = rebuild_line_histories_from_roster_history(
             st.session_state.request_histories,
             st.session_state.roster_history
+        )
+        st.session_state.request_histories = rebuild_mentor_histories_from_roster_history(
+            st.session_state.request_histories,
+            st.session_state.roster_history,
+            st.session_state.staff_list
         )
     except Exception:
         st.session_state.roster_history = []
@@ -2339,6 +2455,11 @@ def roster_history_page():
                 st.session_state.request_histories = rebuild_line_histories_from_roster_history(
                     st.session_state.request_histories,
                     st.session_state.roster_history
+                )
+                st.session_state.request_histories = rebuild_mentor_histories_from_roster_history(
+                    st.session_state.request_histories,
+                    st.session_state.roster_history,
+                    st.session_state.staff_list
                 )
 
                 # Apply approved assignments to current_roster
