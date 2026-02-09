@@ -2633,13 +2633,19 @@ def request_history_page():
     # Mentor history for interns
     if is_intern and history.mentors_worked_with:
         st.markdown("<h2 class='section-header'>Mentor Rotation History</h2>", unsafe_allow_html=True)
-        
+
         st.write("**Mentors Worked With:**")
         for i, (mentor, period, shifts) in enumerate(reversed(history.mentors_worked_with[-5:]), 1):
             if i == 1:
                 st.write(f"{i}. {mentor} ({period}) - {shifts} shifts ← Current")
             else:
                 st.write(f"{i}. {mentor} ({period}) - {shifts} shifts")
+
+        if st.button("🗑️ Clear Mentor History", key=f"clear_mentors_{selected_name}"):
+            history.mentors_worked_with = []
+            auto_save()
+            st.success("Mentor history cleared.")
+            st.rerun()
     
     # Request log
     st.markdown("<h2 class='section-header'>Request Log</h2>", unsafe_allow_html=True)
