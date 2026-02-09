@@ -1039,7 +1039,9 @@ def staff_request_page():
         proj_start = st.session_state.projected_roster_start
         proj_end = st.session_state.projected_roster_end
 
-        # Only consider leave that overlaps with the projected roster period
+        # All leave for boundary validation (validator looks back into current roster)
+        all_leave = [(s, e) for s, e, _ in selected_staff.leave_periods]
+        # Only projected-period leave for Friday-night check
         projected_leave = [(s, e) for s, e, _ in selected_staff.leave_periods
                            if e >= proj_start and s <= proj_end]
 
@@ -1059,7 +1061,7 @@ def staff_request_page():
                             current_line_obj,
                             new_line_obj,
                             proj_start,
-                            leave_periods=projected_leave if projected_leave else None
+                            leave_periods=all_leave if all_leave else None
                         )
                         line_validation_info[new_line_num] = {"valid": is_valid, "reason": message}
             except ImportError:
