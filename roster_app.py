@@ -368,7 +368,73 @@ def display_shift_calendar(schedule: List[tuple], title: str):
 def current_roster_page():
     """Page to view and set the current roster (what lines people are currently on)"""
     st.markdown("<h1 class='main-header'>📅 Current Roster & Leave</h1>", unsafe_allow_html=True)
-    
+
+    # --- Annual Leave Section ---
+    st.markdown("<h2 class='section-header'>Annual Leave</h2>", unsafe_allow_html=True)
+    st.info("Manage leave periods for staff. Leave is saved immediately and will be used during roster generation.")
+
+    all_staff = sorted(st.session_state.staff_list, key=lambda s: s.name)
+    if not all_staff:
+        st.warning("No staff added yet.")
+    else:
+        staff_names = [s.name for s in all_staff]
+        selected_leave_name = st.selectbox("Select Staff Member", staff_names, key="leave_staff_selector", index=None, placeholder="Select staff member...")
+
+        if selected_leave_name:
+            selected_leave_staff = next(s for s in all_staff if s.name == selected_leave_name)
+
+            # Show existing leave periods
+            if selected_leave_staff.leave_periods:
+                st.markdown("#### Current Leave Periods")
+                for idx, (start, end, leave_type) in enumerate(selected_leave_staff.leave_periods):
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        duration = (end - start).days + 1
+                        st.write(f"**{leave_type}:** {start.strftime('%d/%m/%Y')} - {end.strftime('%d/%m/%Y')} ({duration} days)")
+                    with col2:
+                        if st.button("🗑️ Delete", key=f"del_leave_{selected_leave_name}_{idx}", help="Delete this leave period"):
+                            selected_leave_staff.leave_periods.pop(idx)
+                            auto_save()
+                            st.success("Leave period deleted.")
+                            st.rerun()
+            else:
+                st.caption("No leave periods recorded for this staff member.")
+
+            # Add new leave period
+            st.markdown("#### Add Leave Period")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                new_leave_start = st.date_input("Leave Start Date", key="new_leave_start")
+            with col2:
+                new_leave_end = st.date_input("Leave End Date", key="new_leave_end")
+            with col3:
+                new_leave_type = st.selectbox("Leave Type", ["Annual", "MCPD Leave", "Sick Leave", "Other"], key="new_leave_type")
+
+            # Validations
+            new_leave_start_dt = datetime.combine(new_leave_start, datetime.min.time())
+            new_leave_end_dt = datetime.combine(new_leave_end, datetime.min.time())
+
+            if new_leave_start_dt.weekday() != 5:
+                st.warning(f"⚠️ Leave starts on {new_leave_start_dt.strftime('%A')} — annual leave typically starts on Saturday")
+            if new_leave_end_dt.weekday() != 4:
+                st.warning(f"⚠️ Leave ends on {new_leave_end_dt.strftime('%A')} — annual leave typically ends on Friday")
+            leave_duration = (new_leave_end_dt - new_leave_start_dt).days + 1
+            if leave_duration != 21:
+                st.warning(f"⚠️ Leave duration is {leave_duration} days — annual leave is typically 21 days (3 weeks)")
+
+            if st.button("Add Leave", key="add_leave_btn", type="primary"):
+                if new_leave_end_dt <= new_leave_start_dt:
+                    st.error("End date must be after start date.")
+                else:
+                    if not selected_leave_staff.leave_periods:
+                        selected_leave_staff.leave_periods = []
+                    selected_leave_staff.leave_periods.append((new_leave_start_dt, new_leave_end_dt, new_leave_type))
+                    auto_save()
+                    st.success(f"✅ Added {new_leave_type} leave for {selected_leave_name}: {new_leave_start_dt.strftime('%d/%m/%Y')} - {new_leave_end_dt.strftime('%d/%m/%Y')}")
+                    st.rerun()
+
+    st.markdown("---")
+
     st.info("These are the line assignments for the **current active roster**. When generating the projected roster, staff will default to staying on their current line unless they request a change.")
 
     # Show current roster period
@@ -512,67 +578,6 @@ def current_roster_page():
         df = pd.DataFrame(coverage_data)
         st.dataframe(df, width="stretch", hide_index=True)
 
-    # --- Annual Leave Section ---
-    st.markdown("<h2 class='section-header'>Annual Leave</h2>", unsafe_allow_html=True)
-    st.info("Manage leave periods for staff. Leave is saved immediately and will be used during roster generation.")
-
-    all_staff = sorted(st.session_state.staff_list, key=lambda s: s.name)
-    if not all_staff:
-        st.warning("No staff added yet.")
-    else:
-        staff_names = [s.name for s in all_staff]
-        selected_leave_name = st.selectbox("Select Staff Member", staff_names, key="leave_staff_selector")
-        selected_leave_staff = next(s for s in all_staff if s.name == selected_leave_name)
-
-        # Show existing leave periods
-        if selected_leave_staff.leave_periods:
-            st.markdown("#### Current Leave Periods")
-            for idx, (start, end, leave_type) in enumerate(selected_leave_staff.leave_periods):
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    duration = (end - start).days + 1
-                    st.write(f"**{leave_type}:** {start.strftime('%d/%m/%Y')} - {end.strftime('%d/%m/%Y')} ({duration} days)")
-                with col2:
-                    if st.button("🗑️ Delete", key=f"del_leave_{selected_leave_name}_{idx}", help="Delete this leave period"):
-                        selected_leave_staff.leave_periods.pop(idx)
-                        auto_save()
-                        st.success("Leave period deleted.")
-                        st.rerun()
-        else:
-            st.caption("No leave periods recorded for this staff member.")
-
-        # Add new leave period
-        st.markdown("#### Add Leave Period")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            new_leave_start = st.date_input("Leave Start Date", key="new_leave_start")
-        with col2:
-            new_leave_end = st.date_input("Leave End Date", key="new_leave_end")
-        with col3:
-            new_leave_type = st.selectbox("Leave Type", ["Annual", "MCPD Leave", "Sick Leave", "Other"], key="new_leave_type")
-
-        # Validations
-        new_leave_start_dt = datetime.combine(new_leave_start, datetime.min.time())
-        new_leave_end_dt = datetime.combine(new_leave_end, datetime.min.time())
-
-        if new_leave_start_dt.weekday() != 5:
-            st.warning(f"⚠️ Leave starts on {new_leave_start_dt.strftime('%A')} — annual leave typically starts on Saturday")
-        if new_leave_end_dt.weekday() != 4:
-            st.warning(f"⚠️ Leave ends on {new_leave_end_dt.strftime('%A')} — annual leave typically ends on Friday")
-        leave_duration = (new_leave_end_dt - new_leave_start_dt).days + 1
-        if leave_duration != 21:
-            st.warning(f"⚠️ Leave duration is {leave_duration} days — annual leave is typically 21 days (3 weeks)")
-
-        if st.button("Add Leave", key="add_leave_btn", type="primary"):
-            if new_leave_end_dt <= new_leave_start_dt:
-                st.error("End date must be after start date.")
-            else:
-                if not selected_leave_staff.leave_periods:
-                    selected_leave_staff.leave_periods = []
-                selected_leave_staff.leave_periods.append((new_leave_start_dt, new_leave_end_dt, new_leave_type))
-                auto_save()
-                st.success(f"✅ Added {new_leave_type} leave for {selected_leave_name}: {new_leave_start_dt.strftime('%d/%m/%Y')} - {new_leave_end_dt.strftime('%d/%m/%Y')}")
-                st.rerun()
 
 
 def staff_management_page():
@@ -922,9 +927,14 @@ def staff_request_page():
         "Who is submitting this request?",
         options=staff_names,
         help="Select your name from the list",
-        key="staff_selector"
+        key="staff_selector",
+        index=None,
+        placeholder="Select staff member..."
     )
-    
+
+    if not selected_name:
+        return
+
     # Get the selected staff member
     selected_staff = next(s for s in rotating_staff if s.name == selected_name)
     
@@ -2090,8 +2100,8 @@ def manager_roster_page():
         st.markdown("### Individual Schedules")
         
         staff_names = sorted([s.name for s in roster.staff if s.assigned_line])
-        selected_staff_name = st.selectbox("Select Staff Member", staff_names)
-        
+        selected_staff_name = st.selectbox("Select Staff Member", staff_names, index=None, placeholder="Select staff member...")
+
         if selected_staff_name:
             selected_staff = next(s for s in roster.staff if s.name == selected_staff_name)
             
@@ -2542,8 +2552,8 @@ def request_history_page():
         return
     
     staff_names = sorted([s.name for s in rotating_staff])
-    selected_name = st.selectbox("Select Staff Member", staff_names)
-    
+    selected_name = st.selectbox("Select Staff Member", staff_names, index=None, placeholder="Select staff member...")
+
     if not selected_name:
         return
     
