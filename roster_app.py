@@ -367,7 +367,7 @@ def display_shift_calendar(schedule: List[tuple], title: str):
 
 def current_roster_page():
     """Page to view and set the current roster (what lines people are currently on)"""
-    st.markdown("<h1 class='main-header'>📅 Current Roster</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>📅 Current Roster & Leave</h1>", unsafe_allow_html=True)
     
     st.info("These are the line assignments for the **current active roster**. When generating the projected roster, staff will default to staying on their current line unless they request a change.")
 
@@ -511,6 +511,68 @@ def current_roster_page():
         
         df = pd.DataFrame(coverage_data)
         st.dataframe(df, width="stretch", hide_index=True)
+
+    # --- Annual Leave Section ---
+    st.markdown("<h2 class='section-header'>Annual Leave</h2>", unsafe_allow_html=True)
+    st.info("Manage leave periods for staff. Leave is saved immediately and will be used during roster generation.")
+
+    all_staff = sorted(st.session_state.staff_list, key=lambda s: s.name)
+    if not all_staff:
+        st.warning("No staff added yet.")
+    else:
+        staff_names = [s.name for s in all_staff]
+        selected_leave_name = st.selectbox("Select Staff Member", staff_names, key="leave_staff_selector")
+        selected_leave_staff = next(s for s in all_staff if s.name == selected_leave_name)
+
+        # Show existing leave periods
+        if selected_leave_staff.leave_periods:
+            st.markdown("#### Current Leave Periods")
+            for idx, (start, end, leave_type) in enumerate(selected_leave_staff.leave_periods):
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    duration = (end - start).days + 1
+                    st.write(f"**{leave_type}:** {start.strftime('%d/%m/%Y')} - {end.strftime('%d/%m/%Y')} ({duration} days)")
+                with col2:
+                    if st.button("🗑️ Delete", key=f"del_leave_{selected_leave_name}_{idx}", help="Delete this leave period"):
+                        selected_leave_staff.leave_periods.pop(idx)
+                        auto_save()
+                        st.success("Leave period deleted.")
+                        st.rerun()
+        else:
+            st.caption("No leave periods recorded for this staff member.")
+
+        # Add new leave period
+        st.markdown("#### Add Leave Period")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            new_leave_start = st.date_input("Leave Start Date", key="new_leave_start")
+        with col2:
+            new_leave_end = st.date_input("Leave End Date", key="new_leave_end")
+        with col3:
+            new_leave_type = st.selectbox("Leave Type", ["Annual", "MCPD Leave", "Sick Leave", "Other"], key="new_leave_type")
+
+        # Validations
+        new_leave_start_dt = datetime.combine(new_leave_start, datetime.min.time())
+        new_leave_end_dt = datetime.combine(new_leave_end, datetime.min.time())
+
+        if new_leave_start_dt.weekday() != 5:
+            st.warning(f"⚠️ Leave starts on {new_leave_start_dt.strftime('%A')} — annual leave typically starts on Saturday")
+        if new_leave_end_dt.weekday() != 4:
+            st.warning(f"⚠️ Leave ends on {new_leave_end_dt.strftime('%A')} — annual leave typically ends on Friday")
+        leave_duration = (new_leave_end_dt - new_leave_start_dt).days + 1
+        if leave_duration != 21:
+            st.warning(f"⚠️ Leave duration is {leave_duration} days — annual leave is typically 21 days (3 weeks)")
+
+        if st.button("Add Leave", key="add_leave_btn", type="primary"):
+            if new_leave_end_dt <= new_leave_start_dt:
+                st.error("End date must be after start date.")
+            else:
+                if not selected_leave_staff.leave_periods:
+                    selected_leave_staff.leave_periods = []
+                selected_leave_staff.leave_periods.append((new_leave_start_dt, new_leave_end_dt, new_leave_type))
+                auto_save()
+                st.success(f"✅ Added {new_leave_type} leave for {selected_leave_name}: {new_leave_start_dt.strftime('%d/%m/%Y')} - {new_leave_end_dt.strftime('%d/%m/%Y')}")
+                st.rerun()
 
 
 def staff_management_page():
@@ -940,44 +1002,11 @@ def staff_request_page():
         else:
             st.warning(f"⚠️ No tenure protection: You've been on Line {current_line} for {history.rosters_on_current_line}+ rosters")
 
-    st.markdown("<h2 class='section-header'>Leave Period</h2>", unsafe_allow_html=True)
-    
-    # Check leave BEFORE request type so we can use it in line validation
-    has_leave = st.checkbox("I have approved leave during this roster period", key="has_leave_check")
-    
-    temp_leave_periods = []
-    if has_leave:
-        st.info("📅 Annual leave should be a 3-week block starting on Saturday and ending on Friday")
-        st.warning("⚠️ Lines with a night shift on the Friday before your leave starts will be marked as unavailable")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            leave_start = st.date_input("Leave Start Date (should be Saturday)", key="leave_start_preview")
-        with col2:
-            leave_end = st.date_input("Leave End Date (should be Friday)", key="leave_end_preview")
-        with col3:
-            leave_type = st.selectbox("Leave Type", ["Annual", "MCPD Leave", "Sick Leave", "Other"], key="leave_type_preview")
-        
-        # Validate leave dates
-        leave_start_dt = datetime.combine(leave_start, datetime.min.time())
-        leave_end_dt = datetime.combine(leave_end, datetime.min.time())
-        
-        # Check if it's a Saturday start
-        if leave_start_dt.weekday() != 5:
-            st.warning(f"⚠️ Leave starts on {leave_start_dt.strftime('%A')} - annual leave typically starts on Saturday")
-        
-        # Check if it's a Friday end
-        if leave_end_dt.weekday() != 4:
-            st.warning(f"⚠️ Leave ends on {leave_end_dt.strftime('%A')} - annual leave typically ends on Friday")
-        
-        # Check if it's 3 weeks (21 days)
-        leave_duration = (leave_end_dt - leave_start_dt).days + 1
-        if leave_duration != 21:
-            st.warning(f"⚠️ Leave duration is {leave_duration} days - annual leave is typically 21 days (3 weeks)")
-        
-        temp_leave_periods = [(leave_start_dt, leave_end_dt, leave_type)]
-    
     st.markdown("<h2 class='section-header'>Request Type</h2>", unsafe_allow_html=True)
+
+    # Show existing leave if any (managed on Current Roster & Leave page)
+    if selected_staff.leave_periods:
+        st.info(f"📅 You have {len(selected_staff.leave_periods)} leave period(s) recorded. Manage leave on the **Current Roster & Leave** page.")
     
     request_type = st.radio(
         "What would you like to request?",
@@ -1004,6 +1033,8 @@ def staff_request_page():
                 manager = RosterLineManager(st.session_state.roster_start)
                 current_line_obj = manager.lines[current_line - 1]
 
+                all_leave = [(s, e) for s, e, _ in selected_staff.leave_periods]
+
                 for new_line_num in range(1, 10):
                     if new_line_num == current_line:
                         line_validation_info[new_line_num] = {"valid": True, "reason": "Current line"}
@@ -1012,7 +1043,8 @@ def staff_request_page():
                         is_valid, message = validator.validate_line_transition(
                             current_line_obj,
                             new_line_obj,
-                            st.session_state.roster_start
+                            st.session_state.roster_start,
+                            leave_periods=all_leave if all_leave else None
                         )
                         line_validation_info[new_line_num] = {"valid": is_valid, "reason": message}
             except ImportError:
@@ -1039,10 +1071,10 @@ def staff_request_page():
                     }
 
         # Check for night shift on Friday before Saturday leave
-        if temp_leave_periods:
+        if selected_staff.leave_periods:
             manager = RosterLineManager(st.session_state.roster_start)
 
-            for leave_start, leave_end, leave_type in temp_leave_periods:
+            for leave_start, leave_end, leave_type in selected_staff.leave_periods:
                 if leave_start.weekday() == 5:
                     friday_before = leave_start - timedelta(days=1)
 
@@ -1143,11 +1175,7 @@ def staff_request_page():
             # Update the existing staff member's request
             selected_staff.requested_line = requested_line if request_type == "Specific Roster Line" else None
             selected_staff.requested_dates_off = requested_dates if request_type == "Specific Days Off" else []
-            
-            # Update leave periods from the checkbox above
-            if temp_leave_periods:
-                selected_staff.leave_periods = temp_leave_periods
-            
+
             # Record the request in history
             roster_period = f"{st.session_state.roster_start.strftime('%b-%Y')}"
             
@@ -2636,7 +2664,7 @@ def main():
     
     page = st.sidebar.radio(
         "Navigation",
-        ["🔔 Staff Request", "🔍 Line Explorer", "📅 Current Roster", "📜 Roster History", "📊 Request History", "👔 Manager: Create Roster", "👥 Staff Management"]
+        ["🔔 Staff Request", "🔍 Line Explorer", "📅 Current Roster & Leave", "📜 Roster History", "📊 Request History", "👔 Manager: Create Roster", "👥 Staff Management"]
     )
     
     st.sidebar.markdown("---")
@@ -2779,7 +2807,7 @@ def main():
     # Route to correct page
     if page == "👥 Staff Management":
         staff_management_page()
-    elif page == "📅 Current Roster":
+    elif page == "📅 Current Roster & Leave":
         current_roster_page()
     elif page == "🔔 Staff Request":
         staff_request_page()
