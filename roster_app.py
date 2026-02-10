@@ -2000,14 +2000,6 @@ def manager_roster_page():
                         final_assignments[intern_name] = line_num
                         generation_log.append(f"Line {line_num}: {intern_name} (intern rotation)")
 
-                    # Record intern pairings (mentor tracking) and persist to Google Sheets
-                    all_assignments_for_pairings = dict(final_assignments)
-                    intern_system.record_intern_pairings(all_assignments_for_pairings, roster_period)
-
-                    # Save request histories so mentor pairings persist across sessions
-                    hist_dict = {name: h.to_dict() for name, h in st.session_state.request_histories.items()}
-                    data_storage.save_request_history(hist_dict)
-
                 # ── Step 3.5: Coverage repair after intern moves ──
                 # Intern rotation may have created shortfalls by moving interns off
                 # their old lines. Try swapping flexible paramedics to compensate.
