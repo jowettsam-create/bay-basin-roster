@@ -84,11 +84,11 @@ def create_roster_sheet(wb: Workbook, roster: RosterAssignment):
     
     # Add staff schedules
     row = 5
-    
-    # Rotating roster staff
-    for staff in roster.staff:
-        if not hasattr(staff, 'is_fixed_roster') or staff.is_fixed_roster:
-            continue
+
+    # Rotating roster staff - sorted by line number, then alphabetically
+    rotating = [s for s in roster.staff if not hasattr(s, 'is_fixed_roster') or not s.is_fixed_roster]
+    rotating.sort(key=lambda s: (s.assigned_line or 99, s.name))
+    for staff in rotating:
             
         ws.cell(row, 1, staff.name)
         ws.cell(row, 2, staff.role)
@@ -125,10 +125,10 @@ def create_roster_sheet(wb: Workbook, roster: RosterAssignment):
         
         row += 1
     
-    # Fixed roster staff
-    for staff in roster.staff:
-        if not hasattr(staff, 'is_fixed_roster') or not staff.is_fixed_roster:
-            continue
+    # Fixed roster staff - sorted alphabetically
+    fixed = [s for s in roster.staff if hasattr(s, 'is_fixed_roster') and s.is_fixed_roster]
+    fixed.sort(key=lambda s: s.name)
+    for staff in fixed:
             
         ws.cell(row, 1, staff.name)
         ws.cell(row, 2, staff.role)
@@ -279,7 +279,7 @@ def create_summary_sheet(wb: Workbook, roster: RosterAssignment):
         if staff_on_line:
             ws.cell(row, 1, f"Line {line_num}:")
             ws.cell(row, 2, f"{len(staff_on_line)} staff")
-            ws.cell(row, 3, ", ".join([s.name for s in staff_on_line]))
+            ws.cell(row, 3, ", ".join(sorted([s.name for s in staff_on_line])))
             row += 1
     
     row += 1
