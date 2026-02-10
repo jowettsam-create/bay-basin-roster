@@ -160,11 +160,11 @@ def request_history_page():
         st.markdown("<h2 class='section-header'>Mentor Rotation History</h2>", unsafe_allow_html=True)
         
         st.write("**Mentors Worked With:**")
-        for i, (mentor, period) in enumerate(reversed(history.mentors_worked_with[-5:]), 1):
+        for i, (mentor, period, shifts) in enumerate(reversed(history.mentors_worked_with[-5:]), 1):
             if i == 1:
-                st.write(f"{i}. {mentor} ({period}) ← Current")
+                st.write(f"{i}. {mentor} ({period}) - {shifts} shifts ← Current")
             else:
-                st.write(f"{i}. {mentor} ({period})")
+                st.write(f"{i}. {mentor} ({period}) - {shifts} shifts")
     
     # Request log
     st.markdown("<h2 class='section-header'>Request Log</h2>", unsafe_allow_html=True)
@@ -234,8 +234,8 @@ if is_intern:
     # Show mentor history
     if history.mentors_worked_with:
         st.write("**Previous Mentors:**")
-        for mentor, period in history.mentors_worked_with[-3:]:
-            st.write(f"• {mentor} ({period})")
+        for mentor, period, shifts in history.mentors_worked_with[-3:]:
+            st.write(f"• {mentor} ({period}) - {shifts} shifts")
 else:
     st.info(f"""
     **Role:** {selected_staff.role}  
@@ -375,8 +375,8 @@ if interns:
             
             if history.mentors_worked_with:
                 st.write("**Rotation History:**")
-                for mentor, period in history.mentors_worked_with[-3:]:
-                    st.write(f"• {mentor} ({period})")
+                for mentor, period, shifts in history.mentors_worked_with[-3:]:
+                    st.write(f"• {mentor} ({period}) - {shifts} shifts")
 else:
     st.info("No interns in current roster")
 
