@@ -1861,43 +1861,46 @@ def manager_roster_page():
                     conflict_handled.add(winner.name)
                     generation_log.append(f"Line {conflict.line_number}: {winner.name} wins (priority)")
 
-                    # Handle losers - find coverage-safe alternatives
+                    # Handle losers - find the best line considering coverage
                     for loser in losers:
                         conflict_handled.add(loser.name)
                         current_line = st.session_state.current_roster.get(loser.name, 0)
-                        unavailable = [conflict.line_number] + [l for l in final_assignments.values()]
-                        alternatives = detector.suggest_alternatives(loser, unavailable)
+                        # Only exclude the conflict line from suggestion search,
+                        # not all assigned lines (multiple staff can share a line)
+                        alternatives = detector.suggest_alternatives(loser, [conflict.line_number])
 
                         best_alt = None
                         best_delta = float('inf')
 
-                        # Try each suggested alternative, prefer coverage-safe ones
+                        # Evaluate all alternatives — don't stop at the first acceptable one
                         for alt_line, reason in alternatives:
                             from_line = current_line if current_line > 0 else 0
                             result = coverage_analyzer.evaluate_move(working_assignments, loser.name, from_line, alt_line)
-                            if result['delta'] <= 0:
-                                best_alt = alt_line
-                                best_delta = 0
-                                break
-                            elif result['delta'] < best_delta:
+                            if result['delta'] < best_delta:
                                 best_delta = result['delta']
                                 best_alt = alt_line
 
-                        # Staying on current line might be safest for coverage
-                        if current_line > 0 and best_delta > 0:
-                            best_alt = current_line
-                            generation_log.append(f"Line {current_line}: {loser.name} (kept for coverage, lost conflict on Line {conflict.line_number})")
-                            coverage_denials += 1
+                        # Also evaluate staying on current line (even if it's the conflict line)
+                        # — moving away might create a worse coverage gap than sharing the line
+                        if current_line > 0:
+                            stay_result = coverage_analyzer.evaluate_move(working_assignments, loser.name, current_line, current_line)
+                            stay_delta = stay_result['delta']  # always 0 (no change)
+                            if stay_delta < best_delta or best_alt is None:
+                                best_alt = current_line
+                                best_delta = stay_delta
+                                generation_log.append(f"Line {current_line}: {loser.name} (kept for coverage, lost conflict on Line {conflict.line_number})")
+                                coverage_denials += 1
+                            else:
+                                generation_log.append(f"Line {best_alt}: {loser.name} (moved from conflict on Line {conflict.line_number})")
                         elif best_alt:
                             generation_log.append(f"Line {best_alt}: {loser.name} (moved from conflict on Line {conflict.line_number})")
                         else:
                             # Fallback: use coverage-ranked lines
                             ranked = coverage_analyzer.rank_lines_by_coverage_need(working_assignments)
                             for ln, benefit in ranked:
-                                if ln != conflict.line_number:
-                                    best_alt = ln
-                                    generation_log.append(f"Line {ln}: {loser.name} (fallback, coverage-ranked)")
-                                    break
+                                best_alt = ln
+                                generation_log.append(f"Line {ln}: {loser.name} (fallback, coverage-ranked)")
+                                break
 
                         if best_alt:
                             working_assignments[loser.name] = best_alt
