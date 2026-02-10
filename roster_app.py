@@ -2112,45 +2112,132 @@ def manager_roster_page():
                 # Store the roster object for display/export (does NOT change current_roster)
                 st.session_state.roster = roster
 
-                # ── Step 7: Show generation summary ──
-                st.success(f"✅ Roster generated with priority-based assignment!")
-
-                if conflicts:
-                    st.info(f"Resolved {len(conflicts)} conflict(s) using priority scores")
-
-                if interns:
-                    st.info(f"Assigned {len(interns)} intern(s) using mentor rotation")
-
-                if coverage_denials > 0:
-                    st.warning(f"⚠️ {coverage_denials} request(s) denied to maintain minimum coverage")
-
-                # Show final coverage check
-                final_cov_map = coverage_analyzer.build_coverage_map(final_assignments)
-                final_shortfalls = coverage_analyzer.count_shortfalls(final_cov_map)
-                if final_shortfalls > 0:
-                    st.warning(f"⚠️ {final_shortfalls} coverage issue(s) remain (under/overstaffed periods may be unavoidable)")
-                else:
-                    st.success(f"All shifts within coverage range ({min_coverage}-{max_coverage} per shift)")
-
-                with st.expander("Generation Log"):
-                    for entry in generation_log:
-                        st.write(f"• {entry}")
+                # Store summary stats for persistent display
+                st.session_state.projected_conflict_count = len(conflicts)
+                st.session_state.projected_intern_count = len(interns)
+                st.session_state.projected_final_shortfalls = coverage_analyzer.count_shortfalls(
+                    coverage_analyzer.build_coverage_map(final_assignments)
+                )
 
                 # Generate Excel file
                 try:
                     excel_filename = export_roster_to_excel(roster)
                     st.session_state.excel_file = excel_filename
-                    st.success(f"Excel file created: {excel_filename}")
                 except Exception as e:
                     st.error(f"⚠️ Roster generated but Excel export failed: {e}")
                     st.session_state.excel_file = None
-    
-    # Display roster if generated
+
+                st.rerun()
+
+    # Display roster if generated (persists across interactions)
     if st.session_state.roster:
         st.markdown("<h2 class='section-header'>Projected Roster</h2>", unsafe_allow_html=True)
-        
+
         roster = st.session_state.roster
-        
+
+        # Generation summary (persistent)
+        st.success("✅ Roster generated with priority-based assignment!")
+        conflict_count = st.session_state.get('projected_conflict_count', 0)
+        intern_count = st.session_state.get('projected_intern_count', 0)
+        coverage_denials = st.session_state.get('projected_coverage_denials', 0)
+        final_shortfalls = st.session_state.get('projected_final_shortfalls', 0)
+
+        if conflict_count:
+            st.info(f"Resolved {conflict_count} conflict(s) using priority scores")
+        if intern_count:
+            st.info(f"Assigned {intern_count} intern(s) using mentor rotation")
+        if coverage_denials > 0:
+            st.warning(f"⚠️ {coverage_denials} request(s) denied to maintain minimum coverage")
+        if final_shortfalls > 0:
+            st.warning(f"⚠️ {final_shortfalls} coverage issue(s) remain (under/overstaffed periods may be unavoidable)")
+        else:
+            st.success(f"All shifts within coverage range ({min_coverage}-{max_coverage} per shift)")
+
+        # Generation log (persistent)
+        gen_log = st.session_state.get('projected_generation_log', [])
+        if gen_log:
+            with st.expander("Generation Log"):
+                for entry in gen_log:
+                    st.write(f"• {entry}")
+
+        # Intern mentor analysis for projected roster
+        projected = st.session_state.get('projected_assignments', {})
+        proj_interns = [s for s in st.session_state.staff_list if s.role == "Intern" and not s.is_fixed_roster]
+        if proj_interns:
+            with st.expander("Intern Mentor Analysis (Projected)", expanded=True):
+                proj_line_manager = RosterLineManager(st.session_state.projected_roster_start)
+                paramedics = [s for s in st.session_state.staff_list if s.role == "Paramedic" and not s.is_fixed_roster]
+
+                for intern in proj_interns:
+                    proj_line = projected.get(intern.name, 0)
+                    cur_line = st.session_state.current_roster.get(intern.name, 0)
+
+                    st.markdown(f"**{intern.name}** — {'Line ' + str(proj_line) if proj_line > 0 else 'Not assigned'}")
+                    if cur_line > 0 and cur_line != proj_line:
+                        st.caption(f"Previously Line {cur_line}")
+
+                    if proj_line == 0:
+                        st.warning("Not assigned to a line")
+                        continue
+
+                    # Build intern schedule for projected period
+                    intern_line_obj = proj_line_manager.lines[proj_line - 1]
+                    intern_schedule = []
+                    d = st.session_state.projected_roster_start
+                    while d <= st.session_state.projected_roster_end:
+                        shift = intern_line_obj.get_shift_type(d)
+                        if intern.leave_periods:
+                            for ls, le, _ in intern.leave_periods:
+                                if ls <= d <= le:
+                                    shift = 'LEAVE'
+                                    break
+                        intern_schedule.append((d, shift))
+                        d += timedelta(days=1)
+
+                    # Find mentors on same line and cross-line
+                    same_line = []
+                    cross_line = []
+                    for para in paramedics:
+                        para_proj_line = projected.get(para.name, st.session_state.current_roster.get(para.name, 0))
+                        if para_proj_line == 0:
+                            continue
+
+                        para_line_obj = proj_line_manager.lines[para_proj_line - 1]
+                        para_schedule = []
+                        d = st.session_state.projected_roster_start
+                        while d <= st.session_state.projected_roster_end:
+                            shift = para_line_obj.get_shift_type(d)
+                            if para.leave_periods:
+                                for ls, le, _ in para.leave_periods:
+                                    if ls <= d <= le:
+                                        shift = 'LEAVE'
+                                        break
+                            para_schedule.append((d, shift))
+                            d += timedelta(days=1)
+
+                        shared = sum(1 for i, (dt, s) in enumerate(intern_schedule)
+                                     if s in ('D', 'N') and i < len(para_schedule) and para_schedule[i][1] == s)
+
+                        if shared > 0:
+                            if para_proj_line == proj_line:
+                                same_line.append((para.name, shared))
+                            else:
+                                cross_line.append((para.name, para_proj_line, shared))
+
+                    if same_line:
+                        history = st.session_state.request_histories.get(intern.name, RequestHistory(staff_name=intern.name))
+                        for mentor_name, shifts in sorted(same_line, key=lambda x: -x[1]):
+                            tag = "⚠️ Repeat" if history.has_worked_with_mentor(mentor_name, within_rosters=1) else "✅ New"
+                            st.write(f"  Teamed: **{mentor_name}** — {shifts} shifts {tag}")
+                    if cross_line:
+                        for mentor_name, m_line, shifts in sorted(cross_line, key=lambda x: -x[2])[:3]:
+                            st.write(f"  Cross-line: {mentor_name} (Line {m_line}) — {shifts} shifts")
+
+                    if not same_line and not cross_line:
+                        st.warning("  No paramedic mentors found")
+
+                    st.markdown("---")
+
         # Show comparison: Current vs Projected
         st.markdown("### 📊 Current vs Projected Line Assignments")
 
