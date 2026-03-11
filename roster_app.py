@@ -787,20 +787,26 @@ def staff_management_page():
                                 st.write(", ".join(pattern))
                     
                     # Action buttons
-                    col1, col2, col3 = st.columns(3)
-                    
+                    col1, col2, col3, col4 = st.columns(4)
+
                     with col1:
                         if st.button(f"✏️ Edit", key=f"edit_{i}"):
                             st.session_state.editing_staff = staff.name
                             st.rerun()
-                    
+
                     with col2:
                         if not staff.is_fixed_roster:
                             if st.button(f"🔄 Change Line", key=f"change_line_{i}"):
                                 st.session_state.changing_line_for = staff.name
                                 st.rerun()
-                    
+
                     with col3:
+                        switch_label = "📌 Make Fixed" if not staff.is_fixed_roster else "🔄 Make Rotating"
+                        if st.button(switch_label, key=f"switch_type_{i}"):
+                            st.session_state.switching_roster_type = staff.name
+                            st.rerun()
+
+                    with col4:
                         if st.button(f"🗑️ Remove", key=f"remove_{i}"):
                             # Confirm removal
                             st.session_state.confirm_remove = staff.name
@@ -896,7 +902,124 @@ def staff_management_page():
                             if st.button("❌ Cancel", key=f"confirm_no_{i}"):
                                 st.session_state.confirm_remove = None
                                 st.rerun()
-    
+
+                    # Switch roster type (rotating <-> fixed)
+                    if st.session_state.get('switching_roster_type') == staff.name:
+                        st.markdown("---")
+                        if staff.is_fixed_roster:
+                            # Fixed -> Rotating
+                            st.markdown("**Switch to Rotating Roster:**")
+                            new_line = st.selectbox(
+                                "Assign to line",
+                                options=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                                format_func=lambda x: "Unassigned" if x == 0 else f"Line {x}",
+                                key=f"switch_line_{i}"
+                            )
+
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button("💾 Switch to Rotating", key=f"confirm_switch_{i}", type="primary"):
+                                    staff.is_fixed_roster = False
+                                    staff.fixed_schedule = {}
+                                    st.session_state.current_roster[staff.name] = new_line
+                                    auto_save()
+                                    st.session_state.switching_roster_type = None
+                                    st.success(f"✅ {staff.name} is now on rotating roster")
+                                    st.rerun()
+                            with col2:
+                                if st.button("❌ Cancel", key=f"cancel_switch_{i}"):
+                                    st.session_state.switching_roster_type = None
+                                    st.rerun()
+                        else:
+                            # Rotating -> Fixed
+                            st.markdown("**Switch to Fixed Roster:**")
+
+                            fixed_type = st.radio(
+                                "Schedule type",
+                                ["Specific days of week", "Repeating pattern"],
+                                key=f"switch_fixed_type_{i}"
+                            )
+
+                            if fixed_type == "Specific days of week":
+                                col1, col2, col3 = st.columns(3)
+                                working_days = []
+                                with col1:
+                                    if st.checkbox("Monday", key=f"sw_mon_{i}"): working_days.append("Monday")
+                                    if st.checkbox("Tuesday", key=f"sw_tue_{i}"): working_days.append("Tuesday")
+                                    if st.checkbox("Wednesday", key=f"sw_wed_{i}"): working_days.append("Wednesday")
+                                with col2:
+                                    if st.checkbox("Thursday", key=f"sw_thu_{i}"): working_days.append("Thursday")
+                                    if st.checkbox("Friday", key=f"sw_fri_{i}"): working_days.append("Friday")
+                                with col3:
+                                    if st.checkbox("Saturday", key=f"sw_sat_{i}"): working_days.append("Saturday")
+                                    if st.checkbox("Sunday", key=f"sw_sun_{i}"): working_days.append("Sunday")
+
+                                shift_type = st.radio("Shift type", ["Day shifts", "Night shifts"], key=f"sw_shift_{i}")
+                                shift_code = 'D' if shift_type == "Day shifts" else 'N'
+
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.button("💾 Switch to Fixed", key=f"confirm_switch_{i}", type="primary"):
+                                        if not working_days:
+                                            st.error("❌ Please select at least one working day")
+                                        else:
+                                            new_fixed = create_fixed_roster_from_days(
+                                                name=staff.name,
+                                                role=staff.role,
+                                                working_days=working_days,
+                                                shift_type=shift_code,
+                                                roster_start=st.session_state.roster_start,
+                                                roster_end=st.session_state.roster_end
+                                            )
+                                            staff.is_fixed_roster = True
+                                            staff.fixed_schedule = new_fixed.fixed_schedule
+                                            staff.assigned_line = None
+                                            # Remove from rotating roster assignments
+                                            if staff.name in st.session_state.current_roster:
+                                                del st.session_state.current_roster[staff.name]
+                                            auto_save()
+                                            st.session_state.switching_roster_type = None
+                                            st.success(f"✅ {staff.name} is now on fixed roster")
+                                            st.rerun()
+                                with col2:
+                                    if st.button("❌ Cancel", key=f"cancel_switch_{i}"):
+                                        st.session_state.switching_roster_type = None
+                                        st.rerun()
+
+                            else:  # Repeating pattern
+                                pattern = st.text_input(
+                                    "Pattern (D=Day, N=Night, O=Off)",
+                                    placeholder="e.g., DDDDOOO",
+                                    key=f"sw_pattern_{i}"
+                                )
+
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.button("💾 Switch to Fixed", key=f"confirm_switch_pat_{i}", type="primary"):
+                                        if not pattern:
+                                            st.error("❌ Please enter a pattern")
+                                        else:
+                                            new_fixed = create_fixed_roster_staff(
+                                                name=staff.name,
+                                                role=staff.role,
+                                                schedule_pattern=pattern.upper(),
+                                                roster_start=st.session_state.roster_start,
+                                                roster_end=st.session_state.roster_end
+                                            )
+                                            staff.is_fixed_roster = True
+                                            staff.fixed_schedule = new_fixed.fixed_schedule
+                                            staff.assigned_line = None
+                                            if staff.name in st.session_state.current_roster:
+                                                del st.session_state.current_roster[staff.name]
+                                            auto_save()
+                                            st.session_state.switching_roster_type = None
+                                            st.success(f"✅ {staff.name} is now on fixed roster")
+                                            st.rerun()
+                                with col2:
+                                    if st.button("❌ Cancel", key=f"cancel_switch_pat_{i}"):
+                                        st.session_state.switching_roster_type = None
+                                        st.rerun()
+
     with tab2:
         # Add new staff
         st.markdown("### Add New Staff Member")
