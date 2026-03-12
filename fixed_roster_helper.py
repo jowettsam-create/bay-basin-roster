@@ -3,6 +3,7 @@ Fixed Roster Staff Helper Functions
 Utilities for creating and managing staff with fixed schedules
 """
 
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Dict, List
 from roster_assignment import StaffMember
@@ -168,12 +169,11 @@ def extend_fixed_schedule(staff: StaffMember, new_start: datetime, new_end: date
 
     # Infer weekly pattern: for each weekday (0=Mon..6=Sun), find the most
     # common working shift type (D or N).  'O' means off that weekday.
-    from collections import Counter
-    weekday_shifts: Dict[int, list] = {d: [] for d in range(7)}
+    weekday_shifts = {d: [] for d in range(7)}
     for date, shift in staff.fixed_schedule.items():
         weekday_shifts[date.weekday()].append(shift)
 
-    weekly_pattern: Dict[int, str] = {}
+    weekly_pattern = {}
     for wd, shifts in weekday_shifts.items():
         working = [s for s in shifts if s in ('D', 'N')]
         if working:
