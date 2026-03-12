@@ -14,7 +14,8 @@ from roster_boundary_validator import RosterBoundaryValidator
 from fixed_roster_helper import (
     create_fixed_roster_from_days,
     create_fixed_roster_staff,
-    create_fixed_roster_from_dates
+    create_fixed_roster_from_dates,
+    extend_fixed_schedule
 )
 import google_sheets_storage as data_storage
 from excel_export import export_roster_to_excel
@@ -1922,6 +1923,15 @@ def manager_roster_page():
                     max_paramedics_per_shift=max_coverage
                 )
 
+                # Extend fixed roster schedules to cover the projected period
+                for staff in st.session_state.staff_list:
+                    if staff.is_fixed_roster:
+                        extend_fixed_schedule(
+                            staff,
+                            st.session_state.projected_roster_start,
+                            st.session_state.projected_roster_end
+                        )
+
                 # Add all staff
                 for staff in st.session_state.staff_list:
                     roster.add_staff(staff)
@@ -2095,6 +2105,76 @@ def manager_roster_page():
                             generation_log.append(f"Line {ln}: {staff.name} (auto-assigned, coverage-ranked)")
                             break
 
+                # ── Step 2.5: Fill empty lines before intern assignment ──
+                # After all non-intern paramedics are placed, some lines may have
+                # zero effective staff (nobody assigned, or all assigned on full leave).
+                # Move flexible paramedics from overstaffed lines to fill gaps.
+                for _fill_pass in range(9):  # Max 9 iterations (one per empty line)
+                    # Count effective (non-leave) staff per line
+                    effective_per_line = {ln: 0 for ln in range(1, 10)}
+                    staff_on_line = {ln: [] for ln in range(1, 10)}
+                    for staff in non_intern_rotating:
+                        ln = working_assignments.get(staff.name, 0)
+                        if ln < 1:
+                            continue
+                        # Check if staff is on leave for the entire projected period
+                        on_leave_entire = False
+                        if staff.leave_periods:
+                            for ls, le, _ in staff.leave_periods:
+                                if ls <= st.session_state.projected_roster_start and le >= st.session_state.projected_roster_end:
+                                    on_leave_entire = True
+                                    break
+                        if not on_leave_entire:
+                            effective_per_line[ln] += 1
+                        staff_on_line[ln].append((staff, on_leave_entire))
+
+                    empty_lines = [ln for ln in range(1, 10) if effective_per_line[ln] == 0]
+                    if not empty_lines:
+                        break
+
+                    filled_any = False
+                    for empty_ln in empty_lines:
+                        # Find donor lines with 2+ effective staff
+                        donors = [(ln, effective_per_line[ln]) for ln in range(1, 10)
+                                  if effective_per_line[ln] >= 2]
+                        if not donors:
+                            break
+                        # Pick the most overstaffed donor
+                        donors.sort(key=lambda x: x[1], reverse=True)
+
+                        moved = False
+                        for donor_ln, _ in donors:
+                            # From this donor, pick a flexible paramedic (no requests, not conflict-handled)
+                            candidates = []
+                            for staff, on_leave in staff_on_line[donor_ln]:
+                                if on_leave:
+                                    continue
+                                if staff.name in conflict_handled:
+                                    continue
+                                if staff.requested_line or staff.requested_dates_off:
+                                    continue
+                                # Prefer lowest tenure (most recent arrival)
+                                hist = st.session_state.request_histories.get(staff.name)
+                                tenure = hist.rosters_on_current_line if hist else 0
+                                candidates.append((staff, tenure))
+                            if not candidates:
+                                continue
+                            # Pick person with lowest tenure protection
+                            candidates.sort(key=lambda x: x[1])
+                            chosen, _ = candidates[0]
+                            working_assignments[chosen.name] = empty_ln
+                            final_assignments[chosen.name] = empty_ln
+                            generation_log.append(
+                                f"Line {empty_ln}: {chosen.name} (moved from Line {donor_ln} to fill empty line)"
+                            )
+                            filled_any = True
+                            moved = True
+                            break  # Filled this empty line, move to next
+                        if not moved:
+                            continue  # Try next empty line (unlikely to succeed)
+                    if not filled_any:
+                        break  # No more moves possible
+
                 # ── Step 3: Assign interns using rotation system ──
                 if interns:
                     # Build coverage need data for intern scoring bonus
@@ -2111,6 +2191,21 @@ def manager_roster_page():
                             d += timedelta(days=1)
                         line_coverage_needs[ln] = shortfall_days
 
+                    # Count effective non-intern staff per line for intern scoring
+                    eff_staff_per_line = {ln: 0 for ln in range(1, 10)}
+                    for staff in non_intern_rotating:
+                        ln = working_assignments.get(staff.name, 0)
+                        if ln < 1:
+                            continue
+                        on_leave_entire = False
+                        if staff.leave_periods:
+                            for ls, le, _ in staff.leave_periods:
+                                if ls <= st.session_state.projected_roster_start and le >= st.session_state.projected_roster_end:
+                                    on_leave_entire = True
+                                    break
+                        if not on_leave_entire:
+                            eff_staff_per_line[ln] += 1
+
                     intern_system = InternAssignmentSystem(
                         staff_list=st.session_state.staff_list,
                         current_roster=working_assignments,
@@ -2119,6 +2214,7 @@ def manager_roster_page():
                         roster_end=st.session_state.projected_roster_end
                     )
                     intern_system.line_coverage_needs = line_coverage_needs
+                    intern_system.effective_staff_per_line = eff_staff_per_line
                     intern_assignments = intern_system.assign_interns()
 
                     for intern_name, line_num in intern_assignments.items():
@@ -2148,6 +2244,10 @@ def manager_roster_page():
 
                             for to_line in range(1, 10):
                                 if to_line == from_line:
+                                    continue
+                                # Don't place two interns on the same line
+                                if any(other.name != intern.name and working_assignments.get(other.name) == to_line
+                                       for other in interns):
                                     continue
                                 result = coverage_analyzer.evaluate_move(
                                     working_assignments, intern.name, from_line, to_line
