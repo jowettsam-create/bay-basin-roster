@@ -3158,134 +3158,202 @@ def roster_history_page():
 def request_history_page():
     """Page to view request history and priority scores"""
     st.markdown("<h1 class='main-header'>📊 Request History</h1>", unsafe_allow_html=True)
-    
+
     rotating_staff = [s for s in st.session_state.staff_list if not s.is_fixed_roster]
-    
+
     if not rotating_staff:
         st.info("No rotating roster staff yet")
         return
-    
-    staff_names = sorted([s.name for s in rotating_staff])
-    selected_name = st.selectbox("Select Staff Member", staff_names, index=None, placeholder="Select staff member...")
 
-    if not selected_name:
-        return
-    
-    selected_staff = next(s for s in rotating_staff if s.name == selected_name)
-    history = st.session_state.request_histories.get(selected_name)
-    
-    if not history:
-        history = RequestHistory(staff_name=selected_name)
-        st.session_state.request_histories[selected_name] = history
-    
-    # Update current line if needed
-    current_line = st.session_state.current_roster.get(selected_name, 0)
-    if history.current_line != current_line and current_line > 0:
-        history.current_line = current_line
-        if not history.line_history or history.line_history[-1].line_number != current_line:
-            history.rosters_on_current_line = 1
-    
-    # Calculate priorities
-    is_intern = selected_staff.role == "Intern"
-    priority_stay = history.calculate_priority_score(is_requesting_change=False, staff_role=selected_staff.role)
-    priority_change = history.calculate_priority_score(is_requesting_change=True, staff_role=selected_staff.role)
-    
-    # Show priority scores
-    st.markdown("<h2 class='section-header'>Priority Scores</h2>", unsafe_allow_html=True)
-    
-    if is_intern:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Intern Priority", f"{priority_change:.0f}", help="Interns have low priority - only matters vs other interns")
-        with col2:
-            success_rate = f"{history.total_requests_approved}/{history.total_requests_submitted}" if history.total_requests_submitted > 0 else "0/0"
-            st.metric("Success Rate", success_rate)
-        
-        st.info("🔵 As an intern, you're assigned based on mentor rotation for maximum learning exposure")
-    else:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            priority_level = "🟢 High" if priority_stay >= 150 else "🟡 Medium" if priority_stay >= 80 else "🟠 Low"
-            st.metric("Priority (Stay)", f"{priority_stay:.0f}", help="Your priority to stay on current line")
-            st.caption(priority_level)
-        with col2:
-            priority_level = "🟢 High" if priority_change >= 150 else "🟡 Medium" if priority_change >= 80 else "🟠 Low"
-            st.metric("Priority (Change)", f"{priority_change:.0f}", help="Your priority to change lines")
-            st.caption(priority_level)
-        with col3:
-            success_rate = f"{history.total_requests_approved}/{history.total_requests_submitted}" if history.total_requests_submitted > 0 else "0/0"
-            st.metric("Success Rate", success_rate)
-        
-        # Tenure protection message - check for new staff (no line_history)
-        if not history.line_history:
-            st.success(f"✅ New staff - maximum tenure protection (first roster)")
-        elif history.rosters_on_current_line <= 1:
-            st.success(f"✅ Tenure protection active: First/second roster on Line {current_line}")
-        elif history.rosters_on_current_line == 2:
-            st.info(f"ℹ️ Moderate protection: You've been on Line {current_line} for 2 rosters")
+    tab_all, tab_staff = st.tabs(["📋 All Requests", "👤 Staff Detail"])
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Tab 1: All Requests — every request from every staff member, deletable
+    # ══════════════════════════════════════════════════════════════════════════
+    with tab_all:
+        # Collect all requests across all staff
+        all_requests = []  # list of (staff_name, request_idx, RequestRecord)
+        for staff in rotating_staff:
+            h = st.session_state.request_histories.get(staff.name)
+            if h:
+                for idx, req in enumerate(h.request_log):
+                    all_requests.append((staff.name, idx, req))
+
+        if not all_requests:
+            st.info("No requests recorded yet.")
         else:
-            st.warning(f"⚠️ No tenure protection: You've been on Line {current_line} for {history.rosters_on_current_line}+ rosters")
+            # Sort newest first
+            all_requests.sort(key=lambda x: x[2].request_date, reverse=True)
 
-    # Line history
-    st.markdown("<h2 class='section-header'>Line Assignment History</h2>", unsafe_allow_html=True)
-    
-    if history.line_history:
-        for assignment in reversed(history.line_history[-5:]):  # Show last 5
-            end_str = assignment.end_date.strftime('%d/%m/%Y') if assignment.end_date else "Current"
-            st.write(f"**Line {assignment.line_number}** - {assignment.roster_period}")
-            st.caption(f"Started: {assignment.start_date.strftime('%d/%m/%Y')} | Ended: {end_str} | Reason: {assignment.change_reason}")
-    else:
-        st.info("No line history recorded yet")
-    
-    # Mentor history for interns
-    if is_intern and history.mentors_worked_with:
-        st.markdown("<h2 class='section-header'>Mentor Rotation History</h2>", unsafe_allow_html=True)
+            # Filter controls
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                status_filter = st.selectbox(
+                    "Filter by status",
+                    ["All", "pending", "approved", "denied", "forced_move"],
+                    key="req_status_filter"
+                )
+            with col_f2:
+                staff_filter = st.selectbox(
+                    "Filter by staff",
+                    ["All"] + sorted(set(r[0] for r in all_requests)),
+                    key="req_staff_filter"
+                )
 
-        st.write("**Mentors Worked With:**")
-        for i, (mentor, period, shifts) in enumerate(reversed(history.mentors_worked_with[-5:]), 1):
-            if i == 1:
-                st.write(f"{i}. {mentor} ({period}) - {shifts} shifts ← Current")
+            filtered = [
+                (name, idx, req) for name, idx, req in all_requests
+                if (status_filter == "All" or req.status == status_filter)
+                and (staff_filter == "All" or name == staff_filter)
+            ]
+
+            st.caption(f"Showing {len(filtered)} of {len(all_requests)} requests")
+
+            status_emoji = {'approved': '✅', 'denied': '❌', 'pending': '⏳', 'forced_move': '⚠️'}
+
+            for name, idx, req in filtered:
+                emoji = status_emoji.get(req.status, '❓')
+                label = f"{emoji} {name}  ·  {req.roster_period}  ·  {req.request_type}  ·  {req.request_date.strftime('%d/%m/%Y')}"
+                with st.expander(label):
+                    col_info, col_del = st.columns([5, 1])
+                    with col_info:
+                        st.write(f"**Staff:** {name}")
+                        st.write(f"**Period:** {req.roster_period}")
+                        st.write(f"**Type:** {req.request_type}")
+                        st.write(f"**Details:** {req.request_details}")
+                        st.write(f"**Status:** {req.status}")
+                        if req.status == 'approved' and req.approved_date:
+                            st.write(f"**Approved:** {req.approved_date.strftime('%d/%m/%Y')}")
+                        if req.actual_assignment:
+                            st.write(f"**Assigned:** {req.actual_assignment}")
+                        if req.denial_reason:
+                            st.write(f"**Denial reason:** {req.denial_reason}")
+                        if req.was_forced_move:
+                            st.write(f"**⚠️ Forced move** by: {req.forced_by}")
+                        if req.manager_notes:
+                            st.write(f"**Manager notes:** {req.manager_notes}")
+                    with col_del:
+                        if st.button("🗑️ Delete", key=f"del_req_{name}_{idx}"):
+                            h = st.session_state.request_histories.get(name)
+                            if h and idx < len(h.request_log):
+                                removed = h.request_log.pop(idx)
+                                # Update submission/approval counters
+                                if removed.status != 'pending':
+                                    h.total_requests_submitted = max(0, h.total_requests_submitted - 1)
+                                if removed.status == 'approved':
+                                    h.total_requests_approved = max(0, h.total_requests_approved - 1)
+                                elif removed.status == 'denied':
+                                    h.total_requests_denied = max(0, h.total_requests_denied - 1)
+                                auto_save()
+                                st.rerun()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Tab 2: Per-staff detail — priorities, line history, mentor history
+    # ══════════════════════════════════════════════════════════════════════════
+    with tab_staff:
+        staff_names = sorted([s.name for s in rotating_staff])
+        selected_name = st.selectbox("Select Staff Member", staff_names, index=None, placeholder="Select staff member...", key="req_history_staff_select")
+
+        if not selected_name:
+            st.info("Select a staff member above to see their detail.")
+        else:
+            selected_staff = next(s for s in rotating_staff if s.name == selected_name)
+            history = st.session_state.request_histories.get(selected_name)
+
+            if not history:
+                history = RequestHistory(staff_name=selected_name)
+                st.session_state.request_histories[selected_name] = history
+
+            # Update current line if needed
+            current_line = st.session_state.current_roster.get(selected_name, 0)
+            if history.current_line != current_line and current_line > 0:
+                history.current_line = current_line
+                if not history.line_history or history.line_history[-1].line_number != current_line:
+                    history.rosters_on_current_line = 1
+
+            # Priority scores
+            is_intern = selected_staff.role == "Intern"
+            priority_stay = history.calculate_priority_score(is_requesting_change=False, staff_role=selected_staff.role)
+            priority_change = history.calculate_priority_score(is_requesting_change=True, staff_role=selected_staff.role)
+
+            st.markdown("<h2 class='section-header'>Priority Scores</h2>", unsafe_allow_html=True)
+
+            if is_intern:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Intern Priority", f"{priority_change:.0f}", help="Interns have low priority - only matters vs other interns")
+                with col2:
+                    success_rate = f"{history.total_requests_approved}/{history.total_requests_submitted}" if history.total_requests_submitted > 0 else "0/0"
+                    st.metric("Success Rate", success_rate)
+                st.info("🔵 As an intern, you're assigned based on mentor rotation for maximum learning exposure")
             else:
-                st.write(f"{i}. {mentor} ({period}) - {shifts} shifts")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    priority_level = "🟢 High" if priority_stay >= 150 else "🟡 Medium" if priority_stay >= 80 else "🟠 Low"
+                    st.metric("Priority (Stay)", f"{priority_stay:.0f}", help="Your priority to stay on current line")
+                    st.caption(priority_level)
+                with col2:
+                    priority_level = "🟢 High" if priority_change >= 150 else "🟡 Medium" if priority_change >= 80 else "🟠 Low"
+                    st.metric("Priority (Change)", f"{priority_change:.0f}", help="Your priority to change lines")
+                    st.caption(priority_level)
+                with col3:
+                    success_rate = f"{history.total_requests_approved}/{history.total_requests_submitted}" if history.total_requests_submitted > 0 else "0/0"
+                    st.metric("Success Rate", success_rate)
 
-        if st.button("🗑️ Clear Mentor History", key=f"clear_mentors_{selected_name}"):
-            history.mentors_worked_with = []
-            auto_save()
-            st.success("Mentor history cleared.")
-            st.rerun()
-    
-    # Request log
-    st.markdown("<h2 class='section-header'>Request Log</h2>", unsafe_allow_html=True)
-    
-    if history.request_log:
-        for i, request in enumerate(reversed(history.request_log[-10:]), 1):  # Show last 10
-            status_emoji = {
-                'approved': '✅',
-                'denied': '❌',
-                'pending': '⏳',
-                'forced_move': '⚠️'
-            }.get(request.status, '❓')
-            
-            with st.expander(f"{status_emoji} {request.roster_period} - {request.request_type}"):
-                st.write(f"**Requested:** {request.request_date.strftime('%d/%m/%Y')}")
-                st.write(f"**Details:** {request.request_details}")
-                st.write(f"**Status:** {request.status}")
-                
-                if request.status == 'approved':
-                    st.write(f"**Approved:** {request.approved_date.strftime('%d/%m/%Y') if request.approved_date else 'N/A'}")
-                    if request.actual_assignment:
-                        st.write(f"**Assigned:** {request.actual_assignment}")
-                
-                if request.denial_reason:
-                    st.write(f"**Denial Reason:** {request.denial_reason}")
-                
-                if request.was_forced_move:
-                    st.write(f"**⚠️ Forced Move** - Moved by: {request.forced_by}")
-                
-                if request.manager_notes:
-                    st.write(f"**Manager Notes:** {request.manager_notes}")
-    else:
-        st.info("No requests recorded yet")
+                if not history.line_history:
+                    st.success(f"✅ New staff - maximum tenure protection (first roster)")
+                elif history.rosters_on_current_line <= 1:
+                    st.success(f"✅ Tenure protection active: First/second roster on Line {current_line}")
+                elif history.rosters_on_current_line == 2:
+                    st.info(f"ℹ️ Moderate protection: You've been on Line {current_line} for 2 rosters")
+                else:
+                    st.warning(f"⚠️ No tenure protection: You've been on Line {current_line} for {history.rosters_on_current_line}+ rosters")
+
+            # Line history
+            st.markdown("<h2 class='section-header'>Line Assignment History</h2>", unsafe_allow_html=True)
+            if history.line_history:
+                for assignment in reversed(history.line_history[-5:]):
+                    end_str = assignment.end_date.strftime('%d/%m/%Y') if assignment.end_date else "Current"
+                    st.write(f"**Line {assignment.line_number}** - {assignment.roster_period}")
+                    st.caption(f"Started: {assignment.start_date.strftime('%d/%m/%Y')} | Ended: {end_str} | Reason: {assignment.change_reason}")
+            else:
+                st.info("No line history recorded yet")
+
+            # Mentor history for interns
+            if is_intern and history.mentors_worked_with:
+                st.markdown("<h2 class='section-header'>Mentor Rotation History</h2>", unsafe_allow_html=True)
+                st.write("**Mentors Worked With:**")
+                for i, (mentor, period, shifts) in enumerate(reversed(history.mentors_worked_with[-5:]), 1):
+                    suffix = " ← Current" if i == 1 else ""
+                    st.write(f"{i}. {mentor} ({period}) - {shifts} shifts{suffix}")
+
+                if st.button("🗑️ Clear Mentor History", key=f"clear_mentors_{selected_name}"):
+                    history.mentors_worked_with = []
+                    auto_save()
+                    st.success("Mentor history cleared.")
+                    st.rerun()
+
+            # Request log
+            st.markdown("<h2 class='section-header'>Request Log</h2>", unsafe_allow_html=True)
+            if history.request_log:
+                status_emoji = {'approved': '✅', 'denied': '❌', 'pending': '⏳', 'forced_move': '⚠️'}
+                for i, request in enumerate(reversed(history.request_log[-10:]), 1):
+                    emoji = status_emoji.get(request.status, '❓')
+                    with st.expander(f"{emoji} {request.roster_period} - {request.request_type}"):
+                        st.write(f"**Requested:** {request.request_date.strftime('%d/%m/%Y')}")
+                        st.write(f"**Details:** {request.request_details}")
+                        st.write(f"**Status:** {request.status}")
+                        if request.status == 'approved':
+                            st.write(f"**Approved:** {request.approved_date.strftime('%d/%m/%Y') if request.approved_date else 'N/A'}")
+                            if request.actual_assignment:
+                                st.write(f"**Assigned:** {request.actual_assignment}")
+                        if request.denial_reason:
+                            st.write(f"**Denial Reason:** {request.denial_reason}")
+                        if request.was_forced_move:
+                            st.write(f"**⚠️ Forced Move** - Moved by: {request.forced_by}")
+                        if request.manager_notes:
+                            st.write(f"**Manager Notes:** {request.manager_notes}")
+            else:
+                st.info("No requests recorded yet")
 
 
 def main():
