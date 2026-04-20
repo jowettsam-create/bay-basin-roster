@@ -154,23 +154,53 @@ def create_fixed_roster_from_dates(
     )
 
 
-def extend_fixed_schedule(staff: StaffMember, new_start: datetime, new_end: datetime):
+def extend_fixed_schedule(
+    staff: StaffMember,
+    new_start: datetime,
+    new_end: datetime,
+    reference_start: datetime = None,
+    reference_end: datetime = None,
+    force: bool = False,
+):
     """
     Extend a fixed roster staff member's schedule to cover new dates.
 
     Infers the weekly pattern (which weekdays they work and what shift type)
-    from the existing fixed_schedule, then fills in any dates in
-    [new_start, new_end] that aren't already present.
+    from the existing fixed_schedule, then fills in dates in [new_start, new_end].
+
+    Args:
+        staff: Staff member to extend
+        new_start / new_end: Target date range to populate
+        reference_start / reference_end: If provided, only use dates within this
+            range to infer the weekly pattern.  Use this to restrict inference to
+            the CURRENT roster period so that previously-cached projected dates
+            (which may be wrong) don't pollute the pattern.
+        force: If True, overwrite dates that are already present in fixed_schedule.
+            Use this during generation to correct stale cached values.
 
     Modifies staff.fixed_schedule in-place.
     """
     if not staff.is_fixed_roster or not staff.fixed_schedule:
         return
 
+    # Choose which dates to use for pattern inference
+    if reference_start is not None and reference_end is not None:
+        reference_items = [
+            (date, shift)
+            for date, shift in staff.fixed_schedule.items()
+            if reference_start <= date <= reference_end
+        ]
+    else:
+        reference_items = list(staff.fixed_schedule.items())
+
+    if not reference_items:
+        # Fall back to all dates if the reference window has nothing
+        reference_items = list(staff.fixed_schedule.items())
+
     # Infer weekly pattern: for each weekday (0=Mon..6=Sun), find the most
     # common working shift type (D or N).  'O' means off that weekday.
     weekday_shifts = {d: [] for d in range(7)}
-    for date, shift in staff.fixed_schedule.items():
+    for date, shift in reference_items:
         weekday_shifts[date.weekday()].append(shift)
 
     weekly_pattern = {}
@@ -181,10 +211,10 @@ def extend_fixed_schedule(staff: StaffMember, new_start: datetime, new_end: date
         else:
             weekly_pattern[wd] = 'O'
 
-    # Fill in missing dates
+    # Fill in the target date range
     current_date = new_start
     while current_date <= new_end:
-        if current_date not in staff.fixed_schedule:
+        if force or current_date not in staff.fixed_schedule:
             staff.fixed_schedule[current_date] = weekly_pattern.get(current_date.weekday(), 'O')
         current_date += timedelta(days=1)
 

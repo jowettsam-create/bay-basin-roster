@@ -1929,13 +1929,19 @@ def manager_roster_page():
                     max_paramedics_per_shift=max_coverage
                 )
 
-                # Extend fixed roster schedules to cover the projected period
+                # Extend fixed roster schedules to cover the projected period.
+                # Pass force=True and restrict inference to the CURRENT period so
+                # that stale projected-period values don't corrupt the inferred
+                # weekly pattern.
                 for staff in st.session_state.staff_list:
                     if staff.is_fixed_roster:
                         extend_fixed_schedule(
                             staff,
                             st.session_state.projected_roster_start,
-                            st.session_state.projected_roster_end
+                            st.session_state.projected_roster_end,
+                            reference_start=st.session_state.roster_start,
+                            reference_end=st.session_state.roster_end,
+                            force=True,
                         )
 
                 # Add all staff
