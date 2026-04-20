@@ -183,12 +183,20 @@ def extend_fixed_schedule(
     if not staff.is_fixed_roster or not staff.fixed_schedule:
         return
 
-    # Choose which dates to use for pattern inference
+    # Choose which dates to use for pattern inference.
+    # We use only the FIRST 7 dates of the reference window (one full week)
+    # so that stale data from later weeks cannot corrupt the inferred pattern.
     if reference_start is not None and reference_end is not None:
+        window_dates = sorted(
+            d for d in staff.fixed_schedule.keys()
+            if reference_start <= d <= reference_end
+        )
+        # Take the first 7 dates (one clean week)
+        first_week_dates = set(window_dates[:7])
         reference_items = [
             (date, shift)
             for date, shift in staff.fixed_schedule.items()
-            if reference_start <= date <= reference_end
+            if date in first_week_dates
         ]
     else:
         reference_items = list(staff.fixed_schedule.items())

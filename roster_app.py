@@ -792,6 +792,26 @@ def staff_management_page():
                                     shift = staff.fixed_schedule.get(date, 'O')
                                     pattern.append(f"{date.strftime('%a')}: {shift}")
                                 st.write(", ".join(pattern))
+                                if st.button("🔧 Rebuild schedule from this week's pattern", key=f"repair_schedule_{i}"):
+                                    extend_fixed_schedule(
+                                        staff,
+                                        st.session_state.roster_start,
+                                        st.session_state.roster_end,
+                                        reference_start=st.session_state.roster_start,
+                                        reference_end=st.session_state.roster_end,
+                                        force=True,
+                                    )
+                                    extend_fixed_schedule(
+                                        staff,
+                                        st.session_state.projected_roster_start,
+                                        st.session_state.projected_roster_end,
+                                        reference_start=st.session_state.roster_start,
+                                        reference_end=st.session_state.roster_end,
+                                        force=True,
+                                    )
+                                    auto_save()
+                                    st.success(f"✅ Schedule rebuilt and saved for {staff.name}")
+                                    st.rerun()
                     
                     # Action buttons
                     col1, col2, col3, col4 = st.columns(4)
@@ -1929,12 +1949,25 @@ def manager_roster_page():
                     max_paramedics_per_shift=max_coverage
                 )
 
-                # Extend fixed roster schedules to cover the projected period.
-                # Pass force=True and restrict inference to the CURRENT period so
-                # that stale projected-period values don't corrupt the inferred
-                # weekly pattern.
+                # Repair and extend fixed roster schedules.
+                # Strategy: use only the first 7 dates of the current period
+                # (known-good) to infer the weekly pattern, then overwrite BOTH
+                # the rest of the current period AND the entire projected period.
+                # This corrects any stale/corrupted values that may have been
+                # saved from earlier generations.
+                fixed_schedules_repaired = False
                 for staff in st.session_state.staff_list:
                     if staff.is_fixed_roster:
+                        # Repair weeks 2+ of current period
+                        extend_fixed_schedule(
+                            staff,
+                            st.session_state.roster_start,
+                            st.session_state.roster_end,
+                            reference_start=st.session_state.roster_start,
+                            reference_end=st.session_state.roster_end,
+                            force=True,
+                        )
+                        # Fill / overwrite projected period
                         extend_fixed_schedule(
                             staff,
                             st.session_state.projected_roster_start,
@@ -1943,6 +1976,16 @@ def manager_roster_page():
                             reference_end=st.session_state.roster_end,
                             force=True,
                         )
+                        fixed_schedules_repaired = True
+                # Persist repaired schedules so the fix survives page reloads
+                if fixed_schedules_repaired:
+                    data_storage.save_all(
+                        st.session_state.staff_list,
+                        st.session_state.current_roster,
+                        st.session_state.roster_start,
+                        st.session_state.roster_end,
+                        st.session_state.previous_roster_end,
+                    )
 
                 # Add all staff
                 for staff in st.session_state.staff_list:
