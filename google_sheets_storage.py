@@ -285,6 +285,54 @@ class GoogleSheetsStorage:
             st.error(f"Error saving roster history: {e}")
             return False
 
+    def save_roster_snapshots(self, snapshots: List[dict]) -> bool:
+        """Save roster period snapshots to Google Sheets (used for rollback)"""
+        try:
+            try:
+                sheet = self.spreadsheet.worksheet("Roster_Snapshots")
+            except:
+                sheet = self.spreadsheet.add_worksheet(title="Roster_Snapshots", rows=50, cols=8)
+
+            rows = [["snapshot_id", "snapshot_date", "roster_start", "roster_end", "previous_roster_end", "current_roster_json"]]
+            for s in snapshots:
+                rows.append([
+                    s.get('snapshot_id', ''),
+                    s.get('snapshot_date', ''),
+                    s.get('roster_start', ''),
+                    s.get('roster_end', ''),
+                    s.get('previous_roster_end', ''),
+                    json.dumps(s.get('current_roster', {})),
+                ])
+
+            sheet.clear()
+            sheet.update('A1', rows)
+            return True
+        except Exception as e:
+            st.error(f"Error saving roster snapshots: {e}")
+            return False
+
+    def load_roster_snapshots(self) -> List[dict]:
+        """Load roster period snapshots from Google Sheets"""
+        try:
+            sheet = self.spreadsheet.worksheet("Roster_Snapshots")
+            rows = sheet.get_all_values()
+            if len(rows) <= 1:
+                return []
+            snapshots = []
+            for row in rows[1:]:
+                if row[0]:
+                    snapshots.append({
+                        'snapshot_id': row[0],
+                        'snapshot_date': row[1],
+                        'roster_start': row[2],
+                        'roster_end': row[3],
+                        'previous_roster_end': row[4] if len(row) > 4 else '',
+                        'current_roster': json.loads(row[5]) if len(row) > 5 and row[5] else {},
+                    })
+            return snapshots
+        except Exception:
+            return []
+
     def load_roster_history(self) -> List[dict]:
         """Load approved roster history from Google Sheets"""
         try:
@@ -368,5 +416,18 @@ def load_roster_history():
     try:
         storage = get_storage()
         return storage.load_roster_history()
+    except Exception:
+        return []
+
+def save_roster_snapshots(snapshots):
+    """Save roster period snapshots (for rollback)"""
+    storage = get_storage()
+    return storage.save_roster_snapshots(snapshots)
+
+def load_roster_snapshots():
+    """Load roster period snapshots (for rollback)"""
+    try:
+        storage = get_storage()
+        return storage.load_roster_snapshots()
     except Exception:
         return []

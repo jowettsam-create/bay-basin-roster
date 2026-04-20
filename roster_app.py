@@ -384,6 +384,12 @@ if 'roster_history' not in st.session_state:
     except Exception:
         st.session_state.roster_history = []
 
+if 'roster_snapshots' not in st.session_state:
+    try:
+        st.session_state.roster_snapshots = data_storage.load_roster_snapshots()
+    except Exception:
+        st.session_state.roster_snapshots = []
+
 # Calculate projected roster dates if not already set
 if 'projected_roster_start' not in st.session_state or 'projected_roster_end' not in st.session_state:
     st.session_state.projected_roster_start = st.session_state.roster_end + timedelta(days=1)
@@ -2928,6 +2934,83 @@ def roster_history_page():
     st.markdown("---")
     st.markdown("## ⏭️ Advance to Next Roster Period")
 
+    # ── Rollback: Restore a previous period snapshot ─────────────────────────
+    snapshots = st.session_state.get('roster_snapshots', [])
+    with st.expander("↩️ Restore a Previous Roster Period"):
+        if snapshots:
+            st.caption("Each time you advance the period a snapshot is saved. Select one below to roll back to that state.")
+
+            snapshot_labels = [
+                f"Saved {s['snapshot_date']}  —  Period: {datetime.fromisoformat(s['roster_start']).strftime('%d %b %Y')} to {datetime.fromisoformat(s['roster_end']).strftime('%d %b %Y')}"
+                for s in snapshots
+            ]
+            selected_label = st.selectbox(
+                "Select snapshot to restore",
+                options=snapshot_labels[::-1],   # newest first
+                index=0,
+                key="rollback_snapshot_select"
+            )
+            selected_idx = len(snapshots) - 1 - snapshot_labels[::-1].index(selected_label)
+            selected_snap = snapshots[selected_idx]
+
+            s_start = datetime.fromisoformat(selected_snap['roster_start'])
+            s_end = datetime.fromisoformat(selected_snap['roster_end'])
+            s_prev = datetime.fromisoformat(selected_snap['previous_roster_end'])
+
+            st.markdown(f"""
+**Will restore to:**
+- **Current period:** {s_start.strftime('%d %b %Y')} – {s_end.strftime('%d %b %Y')}
+- **Previous roster end:** {s_prev.strftime('%d %b %Y')}
+- **Line assignments:** {len(selected_snap['current_roster'])} staff
+            """)
+
+            confirm_rollback = st.checkbox("I confirm I want to restore this snapshot", key="confirm_rollback")
+            if st.button("↩️ Restore Snapshot", type="primary", disabled=not confirm_rollback, use_container_width=True):
+                st.session_state.roster_start = s_start
+                st.session_state.roster_end = s_end
+                st.session_state.previous_roster_end = s_prev
+                st.session_state.projected_roster_start = s_end + timedelta(days=1)
+                st.session_state.projected_roster_end = st.session_state.projected_roster_start + timedelta(days=62)
+                st.session_state.current_roster = dict(selected_snap['current_roster'])
+                st.session_state.pop('projected_assignments', None)
+                st.session_state.pop('projected_generation_log', None)
+                st.session_state.pop('projected_coverage_denials', None)
+                st.session_state.roster = None
+                auto_save()
+                st.success(
+                    f"✅ Restored to period {s_start.strftime('%d %b %Y')} – {s_end.strftime('%d %b %Y')}\n\n"
+                    f"Projected is now {st.session_state.projected_roster_start.strftime('%d %b %Y')} – {st.session_state.projected_roster_end.strftime('%d %b %Y')}"
+                )
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("**Manual date override** — use this if no snapshots exist yet or you need to set dates manually.")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            manual_start = st.date_input("Current period start", value=st.session_state.roster_start, key="manual_rollback_start")
+            manual_end = st.date_input("Current period end", value=st.session_state.roster_end, key="manual_rollback_end")
+        with col_b:
+            manual_prev = st.date_input("Previous roster end", value=st.session_state.previous_roster_end, key="manual_rollback_prev")
+        confirm_manual = st.checkbox("I confirm I want to set these dates", key="confirm_manual_rollback")
+        if st.button("Set Dates Manually", disabled=not confirm_manual, use_container_width=True):
+            st.session_state.roster_start = datetime.combine(manual_start, datetime.min.time())
+            st.session_state.roster_end = datetime.combine(manual_end, datetime.min.time())
+            st.session_state.previous_roster_end = datetime.combine(manual_prev, datetime.min.time())
+            st.session_state.projected_roster_start = st.session_state.roster_end + timedelta(days=1)
+            st.session_state.projected_roster_end = st.session_state.projected_roster_start + timedelta(days=62)
+            st.session_state.pop('projected_assignments', None)
+            st.session_state.pop('projected_generation_log', None)
+            st.session_state.pop('projected_coverage_denials', None)
+            st.session_state.roster = None
+            auto_save()
+            st.success(
+                f"✅ Dates updated!\n\n"
+                f"**Current:** {st.session_state.roster_start.strftime('%d %b %Y')} – {st.session_state.roster_end.strftime('%d %b %Y')}\n\n"
+                f"**Projected:** {st.session_state.projected_roster_start.strftime('%d %b %Y')} – {st.session_state.projected_roster_end.strftime('%d %b %Y')}"
+            )
+            st.rerun()
+    # ─────────────────────────────────────────────────────────────────────────
+
     st.caption(
         "Once the projected roster has been approved and is ready to become the active roster, "
         "use this to advance the dates forward. The projected roster becomes the current roster, "
@@ -2966,6 +3049,22 @@ def roster_history_page():
     confirm_advance = st.checkbox("I confirm I want to advance the roster period", key="confirm_advance")
 
     if st.button("⏭️ Advance Roster Period", type="primary", use_container_width=True, disabled=not confirm_advance):
+        # 0. Save a rollback snapshot of the current state before advancing
+        snapshot = {
+            'snapshot_id': datetime.now().strftime('%Y%m%d_%H%M%S'),
+            'snapshot_date': datetime.now().strftime('%d %b %Y %H:%M'),
+            'roster_start': st.session_state.roster_start.isoformat(),
+            'roster_end': st.session_state.roster_end.isoformat(),
+            'previous_roster_end': st.session_state.previous_roster_end.isoformat(),
+            'current_roster': dict(st.session_state.current_roster),
+        }
+        if 'roster_snapshots' not in st.session_state:
+            st.session_state.roster_snapshots = []
+        st.session_state.roster_snapshots.append(snapshot)
+        # Keep only the last 10 snapshots
+        st.session_state.roster_snapshots = st.session_state.roster_snapshots[-10:]
+        data_storage.save_roster_snapshots(st.session_state.roster_snapshots)
+
         # 1. Store old current end as new previous_roster_end
         st.session_state.previous_roster_end = st.session_state.roster_end
 
