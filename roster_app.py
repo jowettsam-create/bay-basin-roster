@@ -3171,6 +3171,13 @@ def request_history_page():
     # Tab 1: All Requests — every request from every staff member, deletable
     # ══════════════════════════════════════════════════════════════════════════
     with tab_all:
+        if st.button("🔄 Refresh from Storage", key="refresh_requests"):
+            hist_data = data_storage.load_request_history()
+            for name, hist_dict in hist_data.items():
+                st.session_state.request_histories[name] = RequestHistory.from_dict(hist_dict)
+            st.success("✅ Loaded latest requests from storage")
+            st.rerun()
+
         # Collect all requests across all staff
         all_requests = []  # list of (staff_name, request_idx, RequestRecord)
         for staff in rotating_staff:
