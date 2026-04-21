@@ -1459,8 +1459,8 @@ def staff_request_page():
             selected_staff.requested_line = requested_line if request_type == "Specific Roster Line" else None
             selected_staff.requested_dates_off = requested_dates if request_type == "Specific Days Off" else []
 
-            # Record the request in history
-            roster_period = f"{st.session_state.roster_start.strftime('%b-%Y')}"
+            # Record the request in history — requests are for the PROJECTED period
+            roster_period = f"{st.session_state.projected_roster_start.strftime('%b')}-{st.session_state.projected_roster_end.strftime('%b %Y')}"
             
             request_details = {}
             if request_type == "Specific Roster Line":
